@@ -2,7 +2,7 @@
 import sys
 import plistlib
 
-print("[1/4] Verifying S: (SYSTEM_DRV) mount...")
+print("[1/5] Verifying S: (SYSTEM_DRV) mount...")
 if not os.path.exists(r"S:\EFI\OC"):
     print(r"ERROR: S:\EFI\OC not found! Run 'mountvol S: /S' first.")
     sys.exit(1)
@@ -20,7 +20,7 @@ if not os.path.exists(dsdt_bak):
     print(f"ERROR: Golden DSDT backup not found at {dsdt_bak}")
     sys.exit(1)
 
-print(r"[2/4] Reading golden baseline exclusively from S:\EFI\OC...")
+print(r"[2/5] Reading golden baseline exclusively from S:\EFI\OC...")
 with open(cfg_bak, "rb") as f:
     config = plistlib.load(f)
 
@@ -57,27 +57,54 @@ config["UEFI"]["Quirks"]["RequestBootVarRouting"] = True
 # 4. Kernel Quirks
 config["Kernel"]["Quirks"]["DisableIoMapper"] = True
 
-# 5. DeviceProperties: Intel UHD Graphics (Alder Lake-HX 0x468B) with 2GB VRAM & Framebuffer Acceleration
+# 5. DeviceProperties: Intel UHD Graphics (Alder Lake-HX 0x468B)
+# VESA Escape Fix: Use 19MB/9MB low-DVMT patch to prevent 64MB stolenmem overflow against 32MB BIOS DVMT.
+# Remove con0 overrides which corrupt auto-detected eDP connector.
 dev_add = config["DeviceProperties"]["Add"]
 dev_add["PciRoot(0x0)/Pci(0x2,0x0)"] = {
     "AAPL,GfxYTile": b"\x01\x00\x00\x00",
     "device-id": b"\x8b\x46\x00\x00",
-    # Framebuffer Acceleration & 2048 MB (2 GB) Unified VRAM
+    # Framebuffer Low-DVMT (19MB Stolen + 9MB FBMEM = 28MB < 32MB BIOS Pre-Allocated)
     "framebuffer-patch-enable": b"\x01\x00\x00\x00",
-    "framebuffer-stolenmem": b"\x00\x00\x00\x04",    # 64 MB stolen memory from BIOS
-    "framebuffer-fbmem": b"\x00\x00\x00\x02",        # 32 MB framebuffer memory
+    "framebuffer-stolenmem": b"\x00\x00\x30\x01",    # 19 MB (prevents VESA escape panic)
+    "framebuffer-fbmem": b"\x00\x00\x90\x00",        # 9 MB
     "framebuffer-unifiedmem": b"\x00\x00\x00\x80",    # 2048 MB (2 GB) Unified Metal VRAM
-    "framebuffer-con0-enable": b"\x01\x00\x00\x00",   # Internal eDP connector
-    "framebuffer-con0-altsync": b"\x01\x00\x00\x00",  # 144Hz high refresh rate sync
     "enable-backlight-registers-fix": b"\x01\x00\x00\x00",
     "enable-dbuf-early-optimizer": b"\x01\x00\x00\x00",
     "enable-dvmt-calc-fix": b"\x01\x00\x00\x00",
     "enable-metal": b"\x01\x00\x00\x00",
     "model": "Intel UHD Graphics (Alder Lake-HX 8086:468B)"
 }
-print("  -> Injected 2GB Unified VRAM & Framebuffer Acceleration properties (framebuffer-unifiedmem: 2048MB)")
+print("  -> Injected 19MB/9MB Low-DVMT + 2048MB Unified VRAM (VESA escape fix)")
 
-# 6. Kernel Kext reordering: Lilu #1, VirtualSMC #2
+# 6. Add OpenCore Picker Safe Escape Entries in Misc -> Entries
+misc = config.setdefault("Misc", {})
+entries = misc.setdefault("Entries", [])
+# Filter out old custom entries if re-running
+entries = [e for e in entries if "-wexoff" not in e.get("Arguments", "") and "-wex-noaccel" not in e.get("Arguments", "")]
+
+entries.append({
+    "Arguments": "-wexoff",
+    "Auxiliary": False,
+    "Comment": "Safe Escape: Disable WhateverXe (NullMoth dGPU baseline)",
+    "Enabled": True,
+    "Flavour": "Auto",
+    "Name": "macOS Tahoe (Safe Mode: -wexoff dGPU)",
+    "Path": "PciRoot(0x0)/Pci(0x6,0x0)/Pci(0x0,0x0)/HD(1,GPT,00000000-0000-0000-0000-000000000000,0x800,0x82000)/\\System\\Library\\CoreServices\\boot.efi"
+})
+entries.append({
+    "Arguments": "-igfxdvmt -wex-noaccel",
+    "Auxiliary": False,
+    "Comment": "Safe Escape: WhateverXe Framebuffer Only (No 3D Metal)",
+    "Enabled": True,
+    "Flavour": "Auto",
+    "Name": "macOS Tahoe (Stage 1: -wex-noaccel FB Only)",
+    "Path": "PciRoot(0x0)/Pci(0x6,0x0)/Pci(0x0,0x0)/HD(1,GPT,00000000-0000-0000-0000-000000000000,0x800,0x82000)/\\System\\Library\\CoreServices\\boot.efi"
+})
+misc["Entries"] = entries
+print("  -> Configured OpenCore Misc/Entries with 2 one-click Safe Escape entries (-wexoff and -wex-noaccel)")
+
+# 7. Kernel Kext reordering: Lilu #1, VirtualSMC #2
 kexts = config["Kernel"]["Add"]
 lilu_list = [k for k in kexts if k["BundlePath"] == "Lilu.kext"]
 smc_names = ["VirtualSMC.kext", "SMCBatteryManager.kext", "SMCProcessor.kext", "SMCSuperIO.kext", "SMCLightSensor.kext"]
@@ -91,10 +118,10 @@ if lilu_list:
 # Write clean plist to S:\EFI\OC\config.plist (No BOM, pure Apple DTD)
 with open(cfg_target, "wb") as f:
     plistlib.dump(config, f, sort_keys=False)
-print(f"[3/4] SUCCESS: Wrote 2GB VRAM config.plist to {cfg_target} ({os.path.getsize(cfg_target)} bytes)")
+print(f"[3/5] SUCCESS: Wrote VESA-escape fixed config.plist to {cfg_target} ({os.path.getsize(cfg_target)} bytes)")
 
-# 7. Patch DSDT on S: from S:\EFI\OC\ACPI\DSDT-backup-discrete.aml
-print(r"[4/4] Patching DSDT directly from S:\EFI\OC\ACPI\DSDT-backup-discrete.aml...")
+# 8. Patch DSDT on S: from S:\EFI\OC\ACPI\DSDT-backup-discrete.aml
+print(r"[4/5] Patching DSDT directly from S:\EFI\OC\ACPI\DSDT-backup-discrete.aml...")
 with open(dsdt_bak, "rb") as f:
     dsdt_bytes = bytearray(f.read())
 
@@ -112,5 +139,5 @@ assert (sum(dsdt_bytes) & 0xFF) == 0, "DSDT Checksum verification failed!"
 
 with open(dsdt_target, "wb") as f:
     f.write(dsdt_bytes)
-print(f"SUCCESS: Wrote patched DSDT.aml to {dsdt_target} ({len(dsdt_bytes)} bytes, checksum: 0x{dsdt_bytes[9]:02X})")
-print("\n[DONE] SYSTEM_DRV (S:) is 100% updated with 2GB VRAM and ready to reboot.")
+print(f"[5/5] SUCCESS: Wrote patched DSDT.aml to {dsdt_target} ({len(dsdt_bytes)} bytes, checksum: 0x{dsdt_bytes[9]:02X})")
+print("\n[DONE] SYSTEM_DRV (S:) is 100% updated with VESA Escape Fix & 2GB VRAM.")
