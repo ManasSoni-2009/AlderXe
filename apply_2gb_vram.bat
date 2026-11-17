@@ -1,5 +1,5 @@
 @echo off
-title SYSTEM_DRV (S:) 2GB VRAM Inserter - Lenovo LOQ AlderXe
+title SYSTEM_DRV (S:) 1536MB VRAM & ACPI Fix - Lenovo LOQ AlderXe
 cd /d "%~dp0"
 
 :: Check for Administrator permissions
@@ -12,8 +12,9 @@ if %errorlevel% neq 0 (
 )
 
 echo =====================================================================
-echo  Lenovo LOQ 15IAX9 / 15IRX9 - WhateverXe 2GB VRAM Inserter
+echo  Lenovo LOQ 15IAX9 / 15IRX9 - WhateverXe 1536MB VRAM & ACPI Fix Inserter
 echo  Target: S:\EFI\OC (SYSTEM_DRV - NVMe Partition 1)
+echo  D:\EFI IS STRICTLY PROTECTED AND NEVER TOUCHED!
 echo =====================================================================
 echo.
 

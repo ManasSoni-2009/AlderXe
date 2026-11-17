@@ -300,7 +300,7 @@ if [ "$ACTION" = "status" ]; then
   echo "• SYSTEM_DRV EFI:  $EFI_STATE"
   echo "• 50% Hang Fix:    Removed 64MB+32MB stolenmem overflow + added NVRAM Delete boot-args + -v"
   echo "• Protected Kexts: AirportItlwm, IntelBluetooth, VoodooI2C (-vi2c-force-polling), NVRM 2.9"
-elif [ "$ACTION" = "patch_stage1" ] || [ "$ACTION" = "patch_stage2" ]; then
+elif [ "$ACTION" = "patch_hybrid" ] || [ "$ACTION" = "patch_stage2" ] || [ "$ACTION" = "patch_eco" ] || [ "$ACTION" = "patch_discrete" ] || [ "$ACTION" = "patch_stage1" ]; then
   OC_PLIST="$(mount_efi_and_find_plist)"
   if [ -z "$OC_PLIST" ]; then
     echo "ERROR: Could not locate writable FAT32 SYSTEM_DRV / EFI partition."
@@ -327,7 +327,7 @@ src_path, dst_path, mode_act = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(src_path, 'rb') as f:
     pl = plistlib.load(f)
 
-// 1. Clean Alder Lake-HX (8086:468B) 2GB Unified VRAM & Metal 3 properties (NO Coffee Lake patches)
+# 1. Clean Alder Lake-HX (8086:468B) 1536MB Unified VRAM & Metal 3 properties (NO Coffee Lake patches)
 dp_add = pl.setdefault('DeviceProperties', {}).setdefault('Add', {})
 dp_add['PciRoot(0x0)/Pci(0x2,0x0)'] = {
     'AAPL,GfxYTile': bytes.fromhex('01000000'),
@@ -336,7 +336,7 @@ dp_add['PciRoot(0x0)/Pci(0x2,0x0)'] = {
     'enable-dbuf-early-optimizer': bytes.fromhex('01000000'),
     'enable-dvmt-calc-fix': bytes.fromhex('01000000'),
     'enable-metal': bytes.fromhex('01000000'),
-    'framebuffer-unifiedmem': bytes.fromhex('00000080'), # 2048 MB (2 GB) Unified VRAM
+    'framebuffer-unifiedmem': bytes.fromhex('00000060'), # 1536 MB (1.5 GB Apple Tiger Lake donor profile standard)
     'model': 'Intel UHD Graphics (Alder Lake-HX 8086:468B)'
 }
 # Protect Micron 2400 NVMe (PEG0@6/PEGP@0, 1344:5413) BAR0 & power state
@@ -344,24 +344,26 @@ nvme_dp = dp_add.setdefault('PciRoot(0x0)/Pci(0x6,0x0)/Pci(0x0,0x0)', {})
 nvme_dp['built-in'] = bytes.fromhex('01')
 nvme_dp['deep-idle'] = bytes.fromhex('00000000')
 
-# 2. NEVER DISABLE DSDT.aml! Keep DSDT.aml active with physical memory patches!
+# 2. NEVER DISABLE DSDT.aml! Keep DSDT.aml active
 for acpi_entry in pl.get('ACPI', {}).get('Add', []):
     if isinstance(acpi_entry, dict) and 'DSDT' in acpi_entry.get('Path', '').upper():
         acpi_entry['Enabled'] = True
 
-# 3. Fix AppleVTD DMAR RMRR collision, shrink dual-GPU ReBAR to 256MB (0), and fix XHCI timeout
-b_quirks = pl.setdefault('Booter', {}).setdefault('Quirks', {})
-b_quirks['ResizeAppleGpuBars'] = 0
-b_quirks['RebuildAppleMemoryMap'] = True
-b_quirks['SyncRuntimePermissions'] = True
+# 3. Kernel Quirks: DisableIoMapper=True (fixes AppleVTD deadlock with iGPU RMRR)
 k_quirks = pl.setdefault('Kernel', {}).setdefault('Quirks', {})
 k_quirks['DisableIoMapper'] = True
 k_quirks['SetApfsTrimTimeout'] = -1
-u_quirks = pl.setdefault('UEFI', {}).setdefault('Quirks', {})
-u_quirks['ResizeGpuBars'] = 0
-u_quirks['ReleaseUsbOwnership'] = True
 
-# 3. Update NVRAM -> Add AND NVRAM -> Delete + WriteFlash so OpenCore applies boot-args & csr-active-config!
+# 4. Booter Quirks: Preserve working baseline (RebuildAppleMemoryMap=False, ResizeAppleGpuBars=-1)
+b_quirks = pl.setdefault('Booter', {}).setdefault('Quirks', {})
+b_quirks['RebuildAppleMemoryMap'] = False
+b_quirks['ResizeAppleGpuBars'] = -1
+
+# 5. UEFI Quirks & APFS
+pl.setdefault('UEFI', {}).setdefault('APFS', {})['HideVerbose'] = False
+pl.setdefault('UEFI', {}).setdefault('Quirks', {})['RequestBootVarRouting'] = True
+
+# 6. NVRAM: Update NVRAM -> Add AND NVRAM -> Delete + WriteFlash
 nvram = pl.setdefault('NVRAM', {})
 nvram['WriteFlash'] = True
 nv_uuid = '7C436110-AB2A-4BBB-A880-FE41995C9F82'
@@ -373,20 +375,26 @@ nv_add['csr-active-config'] = bytes.fromhex('03080000')
 if 'csr-active-config' not in nv_del:
     nv_del.append('csr-active-config')
 
-# Remove npci=0x2000 / npci=0x3000 (which freezes [IOPCIConfigurator::configure()] PC00 on Above-4G)
-tokens = [t for t in nv_add.get('boot-args', '').split() if not t.startswith('npci=')]
-for req in ['-v', '-nvmefaspm', '-igfxdvmt', '-disablegfxfirmware']:
-    if req not in tokens:
-        tokens.append(req)
+# Clean boot-args
+tokens = [t for t in nv_add.get('boot-args', '').split() if not t.startswith('npci=') and t != 'ipc_control_port_options=0']
 
-if mode_act == 'patch_stage1':
+if mode_act in ('patch_hybrid', 'patch_stage2'):
+    tokens = [t for t in tokens if t not in ('-wexoff', '-wex-noaccel', 'nv_disable=1')]
+    for req in ['-v', '-allow3d', '-disablegfxfirmware', '-igfxdvmt']:
+        if req not in tokens: tokens.append(req)
+elif mode_act == 'patch_eco':
+    tokens = [t for t in tokens if t not in ('-wexoff', '-wex-noaccel')]
+    for req in ['-v', '-allow3d', '-disablegfxfirmware', '-igfxdvmt', 'nv_disable=1']:
+        if req not in tokens: tokens.append(req)
+elif mode_act == 'patch_discrete':
+    tokens = [t for t in tokens if t not in ('-allow3d', '-wex-noaccel', '-igfxdvmt', 'nv_disable=1')]
+    if '-wexoff' not in tokens: tokens.append('-wexoff')
+    if '-v' not in tokens: tokens.append('-v')
+elif mode_act == 'patch_stage1':
     tokens = [t for t in tokens if t not in ('-allow3d', '-wexoff')]
-    if '-wex-noaccel' not in tokens:
-        tokens.append('-wex-noaccel')
-else:
-    tokens = [t for t in tokens if t not in ('-wex-noaccel', '-wexoff')]
-    if '-allow3d' not in tokens:
-        tokens.append('-allow3d')
+    if '-wex-noaccel' not in tokens: tokens.append('-wex-noaccel')
+    for req in ['-v', '-disablegfxfirmware', '-igfxdvmt']:
+        if req not in tokens: tokens.append(req)
 
 nv_add['boot-args'] = ' '.join(tokens)
 
@@ -398,8 +406,8 @@ PYEOF
     sync
     echo "SUCCESS! Applied $ACTION to $OC_PLIST (260MB SYSTEM_DRV):"
     echo "  • Preserved DSDT.aml as ENABLED (fixes 'acpi tables not found' error)"
-    echo "  • Injected 2048MB Unified VRAM + Metal 3 + csr-active-config=03080000"
-    echo "  • Removed Coffee Lake stolenmem overflow & enabled NVRAM WriteFlash"
+    echo "  • Injected 1536MB Unified VRAM + Metal 3 + csr-active-config=03080000"
+    echo "  • Preserved working Booter quirks (RebuildAppleMemoryMap=False)"
     echo "  • Preserved 100% of Wi-Fi, Bluetooth, VoodooI2C (-vi2c-force-polling) & NVRM 2.9!"
   else
     echo "ERROR: plutil validation failed; active config.plist was NOT modified."
@@ -416,11 +424,20 @@ elif [ "$ACTION" = "auxkc" ]; then
     sudo installer -pkg /tmp/WhateverXe-Graphics.pkg -target / 2>&1
     echo "[3/3] Rebuilding Auxiliary Kernel Collection (AuxKC)..."
     sudo kmutil install --volume-root / --update-all 2>&1 || true
-    echo "SUCCESS: AuxKC updated with Intel Xe Metal bundles! Reboot to get full 2GB Metal 3."
+    echo "SUCCESS: AuxKC updated with Intel Xe Metal bundles! Reboot to get full 1536MB Metal 3."
   else
     echo "Opening WhateverXe-Graphics releases in browser..."
     open "https://github.com/b00t0x/WhateverXe-Graphics/releases"
   fi
+elif [ "$ACTION" = "diagnostics" ]; then
+  echo "=== XECONTROL HARDWARE & GPU DIAGNOSTICS ==="
+  echo "• macOS: $(sw_vers -productVersion) (Build $(sw_vers -buildVersion))"
+  echo "• Boot-Args: $(/usr/sbin/nvram boot-args 2>/dev/null || echo 'Unknown')"
+  echo "• SIP State: $(/usr/bin/csrutil status 2>/dev/null || echo 'Unknown')"
+  echo "• Active Displays:"
+  /usr/sbin/system_profiler SPDisplaysDataType 2>/dev/null | grep -E "Chipset Model|VRAM|Resolution|Metal" | sed 's/^[ \t]*/  - /'
+  echo "• PCI Graphics Providers:"
+  /usr/sbin/ioreg -l -w0 2>/dev/null | grep -i -E "IGPU|GFX0|PEG1|PEGP" | grep -E "class IOPCIDevice|vendor-id|device-id" | head -n 12 | sed 's/^[ \t]*/  - /'
 elif [ "$ACTION" = "rollback" ]; then
   OC_PLIST="$(mount_efi_and_find_plist)"
   if [ -z "$OC_PLIST" ]; then
@@ -467,7 +484,7 @@ cat > "$DASHBOARD_HTML" <<'HTML_EOF'
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>XeControl · Lenovo LOQ MUX & 2GB VRAM Master Controller</title>
+  <title>XeControl · Lenovo LOQ MUX & 1536MB VRAM Master Controller</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #0b0f17; color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif; padding: 24px; }
@@ -485,13 +502,6 @@ cat > "$DASHBOARD_HTML" <<'HTML_EOF'
     .mode-btn.active { border-color: #38bdf8; background: rgba(56, 189, 248, 0.1); }
     .mode-name { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
     .mode-desc { font-size: 12px; color: #94a3b8; line-height: 1.4; }
-    .actions { display: flex; flex-direction: column; gap: 12px; }
-    .act-btn { background: #2563eb; color: white; border: none; padding: 12px 18px; border-radius: 8px; font-weight: 600; font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none; }
-    .act-btn:hover { background: #1d4ed8; }
-    .act-btn.secondary { background: #334155; }
-    .act-btn.secondary:hover { background: #475569; }
-    .act-btn.danger { background: #b91c1c; }
-    .act-btn.danger:hover { background: #991b1b; }
     .code-box { background: #070a10; border: 1px solid #1e293b; border-radius: 8px; padding: 12px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #a5f3fc; overflow-x: auto; margin-top: 8px; }
     .status-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 9999px; font-size: 12px; font-weight: 600; }
     .pill-green { background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.3); }
@@ -506,16 +516,16 @@ cat > "$DASHBOARD_HTML" <<'HTML_EOF'
 
   <div class="grid">
     <div class="card">
-      <div class="card-title">Integrated Graphics (iGPU) <span class="status-pill pill-amber">Stuck at 7MB (VESA Fallback)</span></div>
+      <div class="card-title">Integrated Graphics (iGPU) <span class="status-pill pill-green">Target: 1536 MB Metal 3</span></div>
       <div class="stat-val">Intel UHD Graphics</div>
       <div class="stat-sub">Alder Lake-HX · PCI 00:02.0 · Device ID: 8086:468B · 48 EUs · Internal 144Hz eDP</div>
-      <div class="code-box">Target: 2048 MB Dynamic Metal 3 Unified VRAM</div>
+      <div class="code-box">Profile: 1536 MB Unified VRAM (Apple Tiger Lake Donor Personality)</div>
     </div>
     <div class="card">
       <div class="card-title">Discrete Graphics (dGPU) <span class="status-pill pill-green">Active (Metal 4)</span></div>
       <div class="stat-val">NVIDIA RTX 2050 Mobile</div>
       <div class="stat-sub">GA107M · PCI 01:00.0 · 4GB GDDR6 · Direct HDMI 2.1 Output · NullMoth 2.9</div>
-      <div class="code-box">Status: 0W D3cold idle · Standalone HDMI Direct Scanout</div>
+      <div class="code-box">Status: 0W D3cold idle on battery · Standalone HDMI 2.1 Direct Scanout</div>
     </div>
   </div>
 
@@ -524,7 +534,7 @@ cat > "$DASHBOARD_HTML" <<'HTML_EOF'
     <div class="modes">
       <div class="mode-btn active">
         <div class="mode-name">⚡ Mode 1: Hybrid Metal 3 MUX</div>
-        <div class="mode-desc">UHD 2GB drives internal 144Hz display. RTX 2050 renders 3D offload via IOSurface blit.</div>
+        <div class="mode-desc">UHD 1536MB drives internal 144Hz display. RTX 2050 renders 3D offload via IOSurface blit.</div>
       </div>
       <div class="mode-btn">
         <div class="mode-name">🍃 Mode 0: iGPU Eco Profile</div>
@@ -548,9 +558,9 @@ cat > "$DASHBOARD_HTML" <<'HTML_EOF'
     <div class="card">
       <div class="card-title">🛠️ OpenCore EFI Safe Patcher</div>
       <p style="font-size: 13px; color: #94a3b8; margin-bottom: 12px; line-height: 1.5;">
-        Apply the clean 2GB VRAM patch to <code>SYSTEM_DRV</code> without disabling DSDT.aml or causing ACPI errors:
+        Apply the clean 1536MB VRAM patch to <code>SYSTEM_DRV</code> without disabling DSDT.aml or causing ACPI errors:
       </p>
-      <div class="code-box">sudo /Applications/NullMoth\ 1401.app/Contents/Resources/xecontrol-helper.zsh patch_stage2</div>
+      <div class="code-box">sudo /Applications/NullMoth\ 1401.app/Contents/Resources/xecontrol-helper.zsh patch_hybrid</div>
     </div>
   </div>
 </body>
@@ -568,33 +578,69 @@ on run
   on error
     set helperPath to (POSIX path of (path to home folder)) & "Library/Caches/com.xecontrol.smartapp/xecontrol-helper.zsh"
   end try
+  
   repeat
     set statusInfo to do shell script quoted form of helperPath & " status"
-    set dialogBody to "⚡ XECONTROL · LENOVO LOQ MUX & 2GB VRAM MASTER CONTROLLER" & return & "────────────────────────────────────────────────────────────" & return & statusInfo & return & "────────────────────────────────────────────────────────────" & return & "ESCAPE VESA 7MB & FIX ACPI TABLES:" & return & "1. Apply 2GB VRAM & Fix ACPI: Re-enables DSDT.aml (fixes 'acpi tables not found') + injects 2GB Unified VRAM + sets csr-active-config=03080000." & return & "2. Install AuxKC (Escape 7MB): Downloads WhateverXe-Graphics and rebuilds Auxiliary Kernel Collection so Metal 3 activates." & return & "3. Safe Rollback: Reverts config.plist to safe NullMoth dGPU baseline."
-    set userChoice to button returned of (display dialog dialogBody buttons {"Safe Rollback (-wexoff)", "Install AuxKC (7MB Escape)", "Apply 2GB VRAM & Fix ACPI"} default button "Apply 2GB VRAM & Fix ACPI" with title "XeControl — Alder Lake-HX MUX & 2GB VRAM Controller")
-    if userChoice is "Apply 2GB VRAM & Fix ACPI" then
-      try
-        set patchResult to do shell script quoted form of helperPath & " patch_stage2" with administrator privileges
-        display dialog patchResult buttons {"OK"} default button "OK" with title "XeControl — 2GB VRAM & ACPI Fixed"
-      on error errMsg
-        display dialog "Operation cancelled or failed: " & errMsg buttons {"OK"} default button "OK" with title "XeControl"
-      end try
-    else if userChoice is "Install AuxKC (7MB Escape)" then
-      try
-        set auxResult to do shell script quoted form of helperPath & " auxkc" with administrator privileges
-        display dialog auxResult buttons {"OK"} default button "OK" with title "XeControl — AuxKC Installer"
-      on error errMsg
-        display dialog "Operation cancelled or failed: " & errMsg buttons {"OK"} default button "OK" with title "XeControl"
-      end try
-    else if userChoice is "Safe Rollback (-wexoff)" then
-      try
-        set rbResult to do shell script quoted form of helperPath & " rollback" with administrator privileges
-        display dialog rbResult buttons {"OK"} default button "OK" with title "XeControl — Safe Rollback Complete"
-      on error errMsg
-        display dialog "Rollback cancelled or failed: " & errMsg buttons {"OK"} default button "OK" with title "XeControl"
-      end try
-    else
+    set menuChoices to {¬
+      "1. 🚀 Apply Hybrid Metal 3 (1.5GB VRAM UHD + RTX 2050)", ¬
+      "2. 🍃 Apply Eco Battery Mode (0.0W dGPU / UHD Only)", ¬
+      "3. ⚡ Apply Discrete Mode (NVIDIA RTX 2050 Only)", ¬
+      "4. 🛠️ Rebuild AuxKC & Escape 7MB VESA", ¬
+      "5. 📊 Live GPU & VRAM Diagnostics", ¬
+      "6. 🛡️ Safe Rollback (Restore Working Backup)", ¬
+      "7. 🌐 Open Web Controller Dashboard" ¬
+    }
+    set userSelection to (choose from list menuChoices with title "XeControl · Lenovo LOQ MUX Controller" with prompt ("⚡ XECONTROL · LENOVO LOQ MUX & 1.5GB VRAM CONTROLLER" & return & "──────────────────────────────────────────────" & return & statusInfo & return & "──────────────────────────────────────────────" & return & "Select an action to execute:") default items {"1. 🚀 Apply Hybrid Metal 3 (1.5GB VRAM UHD + RTX 2050)"} OK button name "Execute" cancel button name "Quit")
+    
+    if userSelection is false then
       exit repeat
+    end if
+    
+    set picked to item 1 of userSelection
+    if picked starts with "1" then
+      try
+        set res to do shell script quoted form of helperPath & " patch_hybrid" with administrator privileges
+        display dialog res buttons {"OK"} default button "OK" with title "XeControl — Hybrid Metal 3 Applied"
+      on error errMsg
+        display dialog "Operation cancelled or failed: " & errMsg buttons {"OK"} default button "OK" with title "XeControl Error"
+      end try
+    else if picked starts with "2" then
+      try
+        set res to do shell script quoted form of helperPath & " patch_eco" with administrator privileges
+        display dialog res buttons {"OK"} default button "OK" with title "XeControl — Eco Battery Mode Applied"
+      on error errMsg
+        display dialog "Operation cancelled or failed: " & errMsg buttons {"OK"} default button "OK" with title "XeControl Error"
+      end try
+    else if picked starts with "3" then
+      try
+        set res to do shell script quoted form of helperPath & " patch_discrete" with administrator privileges
+        display dialog res buttons {"OK"} default button "OK" with title "XeControl — Discrete Mode Applied"
+      on error errMsg
+        display dialog "Operation cancelled or failed: " & errMsg buttons {"OK"} default button "OK" with title "XeControl Error"
+      end try
+    else if picked starts with "4" then
+      try
+        set res to do shell script quoted form of helperPath & " auxkc" with administrator privileges
+        display dialog res buttons {"OK"} default button "OK" with title "XeControl — AuxKC Rebuilt (7MB VESA Escape)"
+      on error errMsg
+        display dialog "Operation cancelled or failed: " & errMsg buttons {"OK"} default button "OK" with title "XeControl Error"
+      end try
+    else if picked starts with "5" then
+      try
+        set res to do shell script quoted form of helperPath & " diagnostics"
+        display dialog res buttons {"OK"} default button "OK" with title "XeControl — Live Diagnostics"
+      on error errMsg
+        display dialog "Diagnostics error: " & errMsg buttons {"OK"} default button "OK" with title "XeControl Error"
+      end try
+    else if picked starts with "6" then
+      try
+        set res to do shell script quoted form of helperPath & " rollback" with administrator privileges
+        display dialog res buttons {"OK"} default button "OK" with title "XeControl — Safe Rollback Complete"
+      on error errMsg
+        display dialog "Rollback cancelled or failed: " & errMsg buttons {"OK"} default button "OK" with title "XeControl Error"
+      end try
+    else if picked starts with "7" then
+      do shell script "open " & quoted form of (POSIX path of (path to home folder) & "Library/Caches/com.xecontrol.smartapp/XeControl-Dashboard.html")
     end if
   end repeat
 end run
