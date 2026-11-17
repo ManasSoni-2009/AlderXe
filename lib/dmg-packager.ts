@@ -321,9 +321,9 @@ elif [ "$ACTION" = "patch_hybrid" ] || [ "$ACTION" = "patch_stage2" ] || [ "$ACT
   SOURCE_BASE="$OC_DIR/config-backup-dgpu-working.plist"
   if [ ! -f "$SOURCE_BASE" ]; then SOURCE_BASE="$OC_PLIST"; fi
   STAGED_PLIST="$OC_DIR/config-whateverxe-staged.plist"
-  /usr/bin/python3 - "$SOURCE_BASE" "$STAGED_PLIST" "$ACTION" <<'PYEOF'
-import sys, plistlib
-src_path, dst_path, mode_act = sys.argv[1], sys.argv[2], sys.argv[3]
+  /usr/bin/python3 - "$SOURCE_BASE" "$STAGED_PLIST" "$ACTION" "$OC_DIR" <<'PYEOF'
+import sys, os, plistlib
+src_path, dst_path, mode_act, oc_dir = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 with open(src_path, 'rb') as f:
     pl = plistlib.load(f)
 
@@ -332,10 +332,11 @@ dp_add = pl.setdefault('DeviceProperties', {}).setdefault('Add', {})
 dp_add['PciRoot(0x0)/Pci(0x2,0x0)'] = {
     'AAPL,GfxYTile': bytes.fromhex('01000000'),
     'device-id': bytes.fromhex('8b460000'),
-    'enable-backlight-registers-fix': bytes.fromhex('01000000'),
     'enable-dbuf-early-optimizer': bytes.fromhex('01000000'),
     'enable-dvmt-calc-fix': bytes.fromhex('01000000'),
     'enable-metal': bytes.fromhex('01000000'),
+    'framebuffer-patch-enable': bytes.fromhex('01000000'),
+    'framebuffer-stolenmem': bytes.fromhex('0000C003'), # 60MB DVMT pre-allocated
     'framebuffer-unifiedmem': bytes.fromhex('00000060'), # 1536 MB (1.5 GB Apple Tiger Lake donor profile standard)
     'model': 'Intel UHD Graphics (Alder Lake-HX 8086:468B)'
 }
@@ -344,10 +345,20 @@ nvme_dp = dp_add.setdefault('PciRoot(0x0)/Pci(0x6,0x0)/Pci(0x0,0x0)', {})
 nvme_dp['built-in'] = bytes.fromhex('01')
 nvme_dp['deep-idle'] = bytes.fromhex('00000000')
 
-# 2. NEVER DISABLE DSDT.aml! Keep DSDT.aml active
-for acpi_entry in pl.get('ACPI', {}).get('Add', []):
+# 2. NEVER DISABLE DSDT.aml! Keep DSDT.aml active & ensure SSDT-PWRB.aml is added
+acpi_add = pl.get('ACPI', {}).get('Add', [])
+for acpi_entry in acpi_add:
     if isinstance(acpi_entry, dict) and 'DSDT' in acpi_entry.get('Path', '').upper():
         acpi_entry['Enabled'] = True
+has_pwrb = any(isinstance(e, dict) and 'SSDT-PWRB' in e.get('Path', '').upper() for e in acpi_add)
+if not has_pwrb and os.path.exists(os.path.join(oc_dir, 'ACPI', 'SSDT-PWRB.aml')):
+    acpi_add.append({
+        'Arguments': '',
+        'Auxiliary': False,
+        'Comment': 'Power Button _STR Method (Silences AE_NOT_FOUND)',
+        'Enabled': True,
+        'Path': 'SSDT-PWRB.aml'
+    })
 
 # 3. Kernel Quirks: DisableIoMapper=True (fixes AppleVTD deadlock with iGPU RMRR)
 k_quirks = pl.setdefault('Kernel', {}).setdefault('Quirks', {})

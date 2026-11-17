@@ -23,7 +23,7 @@ if not os.path.exists(cfg_bak):
     sys.exit(1)
 
 # Step 2: DSDT.aml restoration from genuine Lenovo UEFI live registry
-print(r"\n[2/5] Reading genuine Lenovo BIOS Dynamic Graphic DSDT from Windows ACPI Registry...")
+print("\n[2/5] Reading genuine Lenovo BIOS Dynamic Graphic DSDT from Windows ACPI Registry...")
 try:
     reg_key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\ACPI\DSDT\LENOVO\CB-01___\00000001")
     live_dsdt, _ = winreg.QueryValueEx(reg_key, "00000000")
@@ -52,17 +52,43 @@ except Exception as e:
             f.write(raw_bak)
         print(f"  -> Restored golden DSDT backup to {dsdt_target}")
 
+# Step 2b: Write SSDT-PWRB.aml to silence [\_SB_.PWRB._STR] AE_NOT_FOUND
+SSDT_PWRB_BYTES = bytes.fromhex(
+    "53534454620000000224414c44455220505752425354522000100000494e544c12122420"
+    "155c2e5f53425f50575242060010305c2e5f53425f5057524214245f53545200a4111c1a"
+    "50006f00770065007200200042007500740074006f006e000000"
+)
+ssdt_pwrb_target = r"S:\EFI\OC\ACPI\SSDT-PWRB.aml"
+try:
+    with open(ssdt_pwrb_target, "wb") as f:
+        f.write(SSDT_PWRB_BYTES)
+    print(f"  -> SUCCESS: Wrote SSDT-PWRB.aml to {ssdt_pwrb_target} ({len(SSDT_PWRB_BYTES)} bytes)")
+    print("     (Silences [\\_SB_.PWRB._STR] AE_NOT_FOUND warning by providing Unicode string)")
+except Exception as e:
+    print(f"  [!] Failed to write SSDT-PWRB.aml: {e}")
+
 # Step 3: Read golden baseline config.plist
-print(r"\n[3/5] Reading golden baseline config from S:\EFI\OC\config-backup-dgpu-working.plist...")
+print("\n[3/5] Reading golden baseline config from S:\\EFI\\OC\\config-backup-dgpu-working.plist...")
 with open(cfg_bak, "rb") as f:
     config = plistlib.load(f)
 
-# 1. ACPI: Ensure DSDT.aml is ENABLED
+# 1. ACPI: Ensure DSDT.aml is ENABLED and SSDT-PWRB.aml is added
 acpi_add = config.get("ACPI", {}).get("Add", [])
 for entry in acpi_add:
     if isinstance(entry, dict) and "DSDT" in entry.get("Path", "").upper():
         entry["Enabled"] = True
         print(f"  -> Preserved ACPI table: {entry.get('Path')} (Enabled=True)")
+
+has_pwrb = any(isinstance(e, dict) and "SSDT-PWRB" in e.get("Path", "").upper() for e in acpi_add)
+if not has_pwrb:
+    acpi_add.append({
+        "Arguments": "",
+        "Auxiliary": False,
+        "Comment": "Power Button _STR Method (Silences AE_NOT_FOUND)",
+        "Enabled": True,
+        "Path": "SSDT-PWRB.aml"
+    })
+    print("  -> Injected SSDT-PWRB.aml to ACPI -> Add (Enabled=True)")
 
 # 2. Booter Quirks: DO NOT set RebuildAppleMemoryMap=True (breaks Lenovo InsydeH2O trust cache)
 booter_quirks = config.setdefault("Booter", {}).setdefault("Quirks", {})
@@ -112,19 +138,22 @@ for key in ["boot-args", "csr-active-config"]:
 # ACCURATE COMMUNITY WHATEVERXE ARCHITECTURE:
 # - Apple's native driver stack (AppleIntelTGLGraphics) defaults to 1536 MB (1.5 GB).
 # - framebuffer-unifiedmem: \x00\x00\x00\x60 (1536 MB / 0x60000000).
-# - Omit legacy Coffee Lake stolenmem keys to prevent assertion panics.
+# - framebuffer-patch-enable: \x01\x00\x00\x00
+# - framebuffer-stolenmem: \x00\x00\xc0\x03 (60 MB DVMT pre-allocated ceiling)
+# - Note: enable-backlight-registers-fix is removed (prevents black screen on Alder Lake eDP)
 dev_add = config.setdefault("DeviceProperties", {}).setdefault("Add", {})
 dev_add["PciRoot(0x0)/Pci(0x2,0x0)"] = {
     "AAPL,GfxYTile": b"\x01\x00\x00\x00",
     "device-id": b"\x8b\x46\x00\x00",
-    "enable-backlight-registers-fix": b"\x01\x00\x00\x00",
     "enable-dbuf-early-optimizer": b"\x01\x00\x00\x00",
     "enable-dvmt-calc-fix": b"\x01\x00\x00\x00",
     "enable-metal": b"\x01\x00\x00\x00",
+    "framebuffer-patch-enable": b"\x01\x00\x00\x00",
+    "framebuffer-stolenmem": b"\x00\x00\xc0\x03",
     "framebuffer-unifiedmem": b"\x00\x00\x00\x60",  # 1536 MB (1.5 GB, Tiger Lake donor standard)
     "model": "Intel UHD Graphics (Alder Lake-HX 8086:468B)"
 }
-print("  -> Injected 1536MB Unified VRAM DeviceProperties (AppleIntelTGLGraphics donor baseline)")
+print("  -> Injected 1536MB Unified VRAM DeviceProperties (AppleIntelTGLGraphics donor baseline, backlight fix removed)")
 
 # 7. OpenCore Picker Safe Escape Entry
 misc = config.setdefault("Misc", {})
@@ -154,13 +183,14 @@ if lilu_list:
     print("  -> Reordered kexts: Lilu.kext followed immediately by VirtualSMC.kext")
 
 # 9. Write clean plist
-print(r"\n[4/5] Writing verified config.plist to S:\EFI\OC\config.plist...")
+print("\n[4/5] Writing verified config.plist to S:\\EFI\\OC\\config.plist...")
 with open(cfg_target, "wb") as f:
     plistlib.dump(config, f, sort_keys=False)
 print(f"  -> SUCCESS: Wrote clean config.plist ({os.path.getsize(cfg_target)} bytes)")
 
-print(r"\n[5/5] Verification Summary:")
+print("\n[5/5] Verification Summary:")
 print("  • ACPI DSDT.aml: Genuine live BIOS Dynamic Graphic table (665,178 bytes, 0 mod 256)")
+print("  • ACPI SSDT-PWRB: Provided _STR method to silence [_SB.PWRB._STR] AE_NOT_FOUND")
 print("  • iGPU VRAM:     1536 MB (1.5 GB Apple Tiger Lake donor profile standard)")
 print("  • NVRAM SIP:     csr-active-config = 03080000 (AuxKC enabled)")
 print("  • Boot Args:     -v -allow3d -disablegfxfirmware -igfxdvmt")
