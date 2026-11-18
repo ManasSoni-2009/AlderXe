@@ -2,6 +2,35 @@
 import sys
 import plistlib
 import winreg
+import ctypes
+
+class DualLogger:
+    def __init__(self, filepath):
+        self.terminal = sys.stdout
+        self.log = open(filepath, "w", encoding="utf-8")
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+        self.log.flush()
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
+
+log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fix_system_drv.log")
+sys.stdout = DualLogger(log_file)
+sys.stderr = sys.stdout
+
+try:
+    is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
+except:
+    is_admin = False
+
+if not is_admin:
+    print("======================================================================")
+    print(" ERROR: Administrator privileges required to access EFI partition S:\\")
+    print(" Please right-click 'apply_2gb_vram.bat' and select 'Run as Administrator'.")
+    print("======================================================================")
+    sys.exit(1)
 
 print("======================================================================")
 print(" Lenovo LOQ 15IAX9 / 15IRX9 — WhateverXe 1536MB VRAM & ACPI Restorer")
