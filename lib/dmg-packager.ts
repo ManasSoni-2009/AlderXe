@@ -366,6 +366,19 @@ k_quirks = pl.setdefault('Kernel', {}).setdefault('Quirks', {})
 k_quirks['DisableIoMapper'] = True
 k_quirks['SetApfsTrimTimeout'] = -1
 
+# 3b. Kernel Block: Exclude com.apple.driver.IOVersatile (eliminates 0xdc00800e dependency error)
+k_block = pl.setdefault('Kernel', {}).setdefault('Block', [])
+if not any(isinstance(b, dict) and 'IOVersatile' in b.get('Identifier', '') for b in k_block):
+    k_block.append({
+        'Arch': 'Any',
+        'Comment': 'Exclude broken IOVersatile kext in macOS Tahoe (0xdc00800e)',
+        'Enabled': True,
+        'Identifier': 'com.apple.driver.IOVersatile',
+        'MaxKernel': '',
+        'MinKernel': '',
+        'Strategy': 'Exclude'
+    })
+
 # 4. Booter Quirks: Preserve working baseline (RebuildAppleMemoryMap=False, ResizeAppleGpuBars=-1)
 b_quirks = pl.setdefault('Booter', {}).setdefault('Quirks', {})
 b_quirks['RebuildAppleMemoryMap'] = False
@@ -801,6 +814,19 @@ dp_add['PciRoot(0x0)/Pci(0x2,0x0)'] = {
 for acpi_e in pl.get('ACPI', {}).get('Add', []):
     if isinstance(acpi_e, dict) and 'DSDT' in acpi_e.get('Path', '').upper():
         acpi_e['Enabled'] = True
+
+# 2b. Exclude com.apple.driver.IOVersatile in Kernel -> Block (eliminates 0xdc00800e error)
+k_blk = pl.setdefault('Kernel', {}).setdefault('Block', [])
+if not any(isinstance(b, dict) and 'IOVersatile' in b.get('Identifier', '') for b in k_blk):
+    k_blk.append({
+        'Arch': 'Any',
+        'Comment': 'Exclude broken IOVersatile kext in macOS Tahoe (0xdc00800e)',
+        'Enabled': True,
+        'Identifier': 'com.apple.driver.IOVersatile',
+        'MaxKernel': '',
+        'MinKernel': '',
+        'Strategy': 'Exclude'
+    })
 
 # 3. Enforce NVRAM -> Delete -> boot-args + WriteFlash=True so OpenCore actually updates NVRAM!
 nvram = pl.setdefault('NVRAM', {})

@@ -298,3 +298,9 @@ test('All existing working kexts and boot-args are preserved without regression'
   assert.ok(plist.includes('<key>Enabled</key>\n        <false/>') || plist.includes('<false/>'));
 });
 
+test('com.apple.driver.IOVersatile is excluded under Kernel -> Block to eliminate 0xdc00800e crash', () => {
+  const plist = generateOpenCoreConfigPlist(DEFAULT_DRIVER_CONFIG, 'hybrid_mux');
+  assert.ok(plist.includes('com.apple.driver.IOVersatile'));
+  assert.ok(plist.includes('<key>Strategy</key>\n        <string>Exclude</string>') || plist.includes('<string>Exclude</string>'));
+});
+

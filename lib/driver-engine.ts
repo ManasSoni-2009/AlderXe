@@ -1683,6 +1683,25 @@ export function generateOpenCoreConfigPlist(config: DriverConfig, mode: MuxMode)
 
   <key>Kernel</key>
   <dict>
+    <key>Block</key>
+    <array>
+      <dict>
+        <key>Arch</key>
+        <string>Any</string>
+        <key>Comment</key>
+        <string>Exclude broken IOVersatile kext in macOS Tahoe (0xdc00800e)</string>
+        <key>Enabled</key>
+        <true/>
+        <key>Identifier</key>
+        <string>com.apple.driver.IOVersatile</string>
+        <key>MaxKernel</key>
+        <string></string>
+        <key>MinKernel</key>
+        <string></string>
+        <key>Strategy</key>
+        <string>Exclude</string>
+      </dict>
+    </array>
     <key>Quirks</key>
     <dict>
       <key>DisableIoMapper</key>
