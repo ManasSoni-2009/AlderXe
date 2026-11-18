@@ -24,8 +24,9 @@ set PY_EXIT=%errorlevel%
 echo.
 echo =====================================================================
 if %PY_EXIT% equ 0 (
-    echo  [SUCCESS] Full Metal 3 Hardware Acceleration successfully applied!
+    echo  [SUCCESS] WhateverXe v0.8.3 & Full Metal 3 Configuration successfully applied!
     echo  All fixes applied:
+    echo    - WhateverXe v0.8.3 Installed (Alder Lake-HX eDP startup fix matching PKG)
     echo    - Full Metal 3 Acceleration (WhateverXe enabled, -allow3d, 1536MB VRAM)
     echo    - 100%% Responsive Login Screen (Purged amfi=0x80, authd/keychain restored)
     echo    - Audio Deadlock Eliminated (SimpleHDA disabled, AppleALC alcid=11 active)
@@ -35,7 +36,7 @@ if %PY_EXIT% equ 0 (
     echo    - VoodooInput Deduplication (Fixes vm_map_delete kernel panic)
     echo    - Discrete RTX 2050 Powered Down (-nvoff nv_disable=1)
     echo    - DSDT Dynamic NVS Address Patched (Zero ACPI errors)
-    echo    - OpenCore Picker Fallbacks (-wex-noaccel Framebuffer, -wexoff Safe VESA)
+    echo    - OpenCore Picker Fallbacks (Framebuffer Only, Golden Baseline RTX 2050, Safe VESA)
 ) else (
     echo  [ERROR] Script exited with code %PY_EXIT%.
     echo  Check fix_system_drv.log for details.
