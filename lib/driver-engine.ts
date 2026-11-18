@@ -815,6 +815,9 @@ export function buildBootArgs(config: DriverConfig, mode: MuxMode): string {
   if (config.enableGuCFirmware) {
     args.push('-disablegfxfirmware');
   }
+  if (config.enableTahoeLiquidGlass) {
+    args.push('-wex-skip-gputicks');
+  }
   if (config.enableIgfxDvmtBootArg || config.stolenMemoryMb < 96) {
     args.push('-igfxdvmt');
   }
@@ -1000,17 +1003,17 @@ $raw = [regex]::Replace($raw, '(<key>boot-args</key>\\s*<string>)([^<]*)(</strin
 $igpuBlock = @"
 			<key>PciRoot(0x0)/Pci(0x2,0x0)</key>
 			<dict>
-				<key>AAPL,GfxYTile</key>
-				<data>AQAAAA==</data>
 				<key>device-id</key>
 				<data>i0YAAA==</data>
-				<key>enable-backlight-registers-fix</key>
+				<key>enable-cdclk-frequency-fix</key>
 				<data>AQAAAA==</data>
 				<key>enable-dbuf-early-optimizer</key>
 				<data>AQAAAA==</data>
 				<key>enable-dvmt-calc-fix</key>
 				<data>AQAAAA==</data>
 				<key>enable-metal</key>
+				<data>AQAAAA==</data>
+				<key>force-online</key>
 				<data>AQAAAA==</data>
 				<key>igfxfw</key>
 				<data>AgAAAA==</data>
@@ -1637,17 +1640,17 @@ export function generateOpenCoreConfigPlist(config: DriverConfig, mode: MuxMode)
       <!-- Raw 4-Byte Little-Endian Reference: device-id=<data>${config.deviceIdHex.toUpperCase()}</data> stolenmem=<data>${stolenHex}</data> fbmem=<data>${fbmemHex}</data> unifiedmem=<data>${unifiedHex}</data> -->
       <key>PciRoot(0x0)/Pci(0x2,0x0)</key>
       <dict>
-        <key>AAPL,GfxYTile</key>
-        <data>AQAAAA==</data>
         <key>device-id</key>
         <data>${config.useDeviceIdOverride ? devIdB64 : 'i0YAAA=='}</data>
-        <key>enable-backlight-registers-fix</key>
+        <key>enable-cdclk-frequency-fix</key>
         <data>AQAAAA==</data>
         <key>enable-dbuf-early-optimizer</key>
         <data>AQAAAA==</data>
         <key>enable-dvmt-calc-fix</key>
         <data>AQAAAA==</data>
         <key>enable-metal</key>
+        <data>AQAAAA==</data>
+        <key>force-online</key>
         <data>AQAAAA==</data>
         <key>framebuffer-patch-enable</key>
         <data>${patchEnableB64}</data>
@@ -2769,7 +2772,8 @@ final class XeControlStore: ObservableObject {
         import sys, plistlib
         with open(sys.argv[1], 'rb') as f: pl = plistlib.load(f)
         igpu = pl.setdefault('DeviceProperties', {}).setdefault('Add', {}).setdefault('PciRoot(0x0)/Pci(0x2,0x0)', {})
-        igpu['AAPL,GfxYTile'] = bytes.fromhex('01000000')
+        igpu['force-online'] = bytes.fromhex('01000000')
+        igpu['enable-cdclk-frequency-fix'] = bytes.fromhex('01000000')
         igpu['enable-dvmt-calc-fix'] = bytes.fromhex('01000000')
         igpu['framebuffer-patch-enable'] = bytes.fromhex('01000000')
         igpu['framebuffer-stolenmem'] = bytes.fromhex('${stolenHex}')

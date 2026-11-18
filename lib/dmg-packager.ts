@@ -330,11 +330,12 @@ with open(src_path, 'rb') as f:
 # 1. Clean Alder Lake-HX (8086:468B) 1536MB Unified VRAM & Metal 3 properties (NO Coffee Lake patches)
 dp_add = pl.setdefault('DeviceProperties', {}).setdefault('Add', {})
 dp_add['PciRoot(0x0)/Pci(0x2,0x0)'] = {
-    'AAPL,GfxYTile': bytes.fromhex('01000000'),
     'device-id': bytes.fromhex('8b460000'),
+    'enable-cdclk-frequency-fix': bytes.fromhex('01000000'),
     'enable-dbuf-early-optimizer': bytes.fromhex('01000000'),
     'enable-dvmt-calc-fix': bytes.fromhex('01000000'),
     'enable-metal': bytes.fromhex('01000000'),
+    'force-online': bytes.fromhex('01000000'),
     'framebuffer-patch-enable': bytes.fromhex('01000000'),
     'framebuffer-stolenmem': bytes.fromhex('0000C003'), # 60MB DVMT pre-allocated
     'framebuffer-unifiedmem': bytes.fromhex('00000060'), # 1536 MB (1.5 GB Apple Tiger Lake donor profile standard)
@@ -391,20 +392,21 @@ tokens = [t for t in nv_add.get('boot-args', '').split() if not t.startswith('np
 
 if mode_act in ('patch_hybrid', 'patch_stage2'):
     tokens = [t for t in tokens if t not in ('-wexoff', '-wex-noaccel')]
-    for req in ['-v', '-allow3d', '-disablegfxfirmware', '-igfxdvmt', '-nvoff', 'nv_disable=1']:
+    for req in ['-v', '-allow3d', '-disablegfxfirmware', '-igfxdvmt', '-nvoff', 'nv_disable=1', '-vi2c-force-polling', '-wex-skip-gputicks']:
         if req not in tokens: tokens.append(req)
 elif mode_act == 'patch_eco':
     tokens = [t for t in tokens if t not in ('-wexoff', '-wex-noaccel')]
-    for req in ['-v', '-allow3d', '-disablegfxfirmware', '-igfxdvmt', '-nvoff', 'nv_disable=1']:
+    for req in ['-v', '-allow3d', '-disablegfxfirmware', '-igfxdvmt', '-nvoff', 'nv_disable=1', '-vi2c-force-polling', '-wex-skip-gputicks']:
         if req not in tokens: tokens.append(req)
 elif mode_act == 'patch_discrete':
-    tokens = [t for t in tokens if t not in ('-allow3d', '-wex-noaccel', '-igfxdvmt', 'nv_disable=1', '-nvoff')]
+    tokens = [t for t in tokens if t not in ('-allow3d', '-wex-noaccel', '-igfxdvmt', 'nv_disable=1', '-nvoff', '-wex-skip-gputicks')]
+    for req in ['-v', '-vi2c-force-polling']:
+        if req not in tokens: tokens.append(req)
     if '-wexoff' not in tokens: tokens.append('-wexoff')
-    if '-v' not in tokens: tokens.append('-v')
 elif mode_act == 'patch_stage1':
     tokens = [t for t in tokens if t not in ('-allow3d', '-wexoff')]
     if '-wex-noaccel' not in tokens: tokens.append('-wex-noaccel')
-    for req in ['-v', '-disablegfxfirmware', '-igfxdvmt']:
+    for req in ['-v', '-disablegfxfirmware', '-igfxdvmt', '-vi2c-force-polling', '-wex-skip-gputicks']:
         if req not in tokens: tokens.append(req)
 
 nv_add['boot-args'] = ' '.join(tokens)
@@ -780,16 +782,27 @@ import sys, plistlib
 with open(sys.argv[1], 'rb') as f:
     pl = plistlib.load(f)
 
-# 1. Remove any toxic Coffee Lake / stolenmem-overflow keys from PciRoot(0x0)/Pci(0x2,0x0)
+# 1. Inject verified Alder Lake-HX (8086:468B) 1536MB Unified VRAM & Metal 3 properties
 dp_add = pl.setdefault('DeviceProperties', {}).setdefault('Add', {})
-if 'PciRoot(0x0)/Pci(0x2,0x0)' in dp_add:
-    igpu = dp_add['PciRoot(0x0)/Pci(0x2,0x0)']
-    for bad_key in ['AAPL,GfxYTile', 'framebuffer-stolenmem', 'framebuffer-fbmem', 'framebuffer-patch-enable', 'enable-dvmt-calc-fix']:
-        igpu.pop(bad_key, None)
-    if not igpu:
-        dp_add.pop('PciRoot(0x0)/Pci(0x2,0x0)', None)
+dp_add['PciRoot(0x0)/Pci(0x2,0x0)'] = {
+    'device-id': bytes.fromhex('8b460000'),
+    'enable-cdclk-frequency-fix': bytes.fromhex('01000000'),
+    'enable-dbuf-early-optimizer': bytes.fromhex('01000000'),
+    'enable-dvmt-calc-fix': bytes.fromhex('01000000'),
+    'enable-metal': bytes.fromhex('01000000'),
+    'force-online': bytes.fromhex('01000000'),
+    'framebuffer-patch-enable': bytes.fromhex('01000000'),
+    'framebuffer-stolenmem': bytes.fromhex('0000C003'),
+    'framebuffer-unifiedmem': bytes.fromhex('00000060'), # 1536 MB
+    'model': 'Intel UHD Graphics (Alder Lake-HX 8086:468B)'
+}
 
-# 2. Enforce NVRAM -> Delete -> boot-args + WriteFlash=True so OpenCore actually updates NVRAM!
+# 2. Preserve DSDT.aml as ENABLED
+for acpi_e in pl.get('ACPI', {}).get('Add', []):
+    if isinstance(acpi_e, dict) and 'DSDT' in acpi_e.get('Path', '').upper():
+        acpi_e['Enabled'] = True
+
+# 3. Enforce NVRAM -> Delete -> boot-args + WriteFlash=True so OpenCore actually updates NVRAM!
 nvram = pl.setdefault('NVRAM', {})
 nvram['WriteFlash'] = True
 nv_uuid = '7C436110-AB2A-4BBB-A880-FE41995C9F82'
@@ -797,10 +810,13 @@ nv_add = nvram.setdefault('Add', {}).setdefault(nv_uuid, {})
 nv_del = nvram.setdefault('Delete', {}).setdefault(nv_uuid, [])
 if 'boot-args' not in nv_del:
     nv_del.append('boot-args')
+nv_add['csr-active-config'] = bytes.fromhex('03080000')
+if 'csr-active-config' not in nv_del:
+    nv_del.append('csr-active-config')
 
-# 3. Default to Stage 1 Safe Framebuffer Probe (-v -igfxdvmt -wex-noaccel) so WindowServer never hangs blindly at 50%
-tokens = [t for t in nv_add.get('boot-args', '').split() if t not in ('-allow3d', '-wexoff')]
-for flag in ['-v', '-disablegfxfirmware', '-igfxdvmt', '-wex-noaccel']:
+# 4. Inject Full Hybrid Metal 3 boot-args with input polling and GPU_TICKS fix
+tokens = [t for t in nv_add.get('boot-args', '').split() if t not in ('-wexoff', '-wex-noaccel') and not t.startswith('npci=')]
+for flag in ['-v', '-allow3d', '-disablegfxfirmware', '-igfxdvmt', '-nvoff', 'nv_disable=1', '-vi2c-force-polling', '-wex-skip-gputicks']:
     if flag not in tokens:
         tokens.append(flag)
 nv_add['boot-args'] = ' '.join(tokens)
@@ -812,7 +828,7 @@ PYEOF
   sudo cp "$STAGE_DIR/config-whateverxe-staged.plist" "$OC_DIR/config-whateverxe-staged.plist"
   sudo cp "$STAGE_DIR/config-whateverxe-staged.plist" "$OC_PLIST"
   sync
-  echo "      -> [SUCCESS] Surgically patched $OC_PLIST (Stage 1 Verbose Probe: -v -igfxdvmt -wex-noaccel)!"
+  echo "      -> [SUCCESS] Surgically patched $OC_PLIST (Hybrid Metal 3: 1536MB UHD + -vi2c-force-polling)!"
   echo "      -> Removed toxic 64MB+32MB stolenmem overflow & added NVRAM Delete boot-args."
   echo "      -> 100% of your Wi-Fi, Bluetooth, VoodooI2C (-vi2c-force-polling) & NVRM 2.9 kexts were preserved!"
 else

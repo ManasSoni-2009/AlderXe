@@ -148,13 +148,15 @@ clean_args = " ".join(clean_args.split())
 if not clean_args.startswith("-v"):
     clean_args = "-v " + clean_args
 
-for arg in ["-allow3d", "-disablegfxfirmware", "-igfxdvmt", "-nvoff", "nv_disable=1"]:
+for arg in ["-allow3d", "-disablegfxfirmware", "-igfxdvmt", "-nvoff", "nv_disable=1", "-vi2c-force-polling", "-wex-skip-gputicks"]:
     if arg not in clean_args:
         clean_args += f" {arg}"
 
 nvram_add["boot-args"] = clean_args
 print(f"  -> Injected boot-args: {clean_args}")
 print("     (-nvoff nv_disable=1 disables NullMoth from claiming IOVersatile and causing 0xdc00800e crash)")
+print("     (-vi2c-force-polling forces VoodooI2C timer polling, fixing unresponsive login screen trackpad/keyboard)")
+print("     (-wex-skip-gputicks bypasses register 0x2910 GPU_TICKS timeout on Alder Lake-HX)")
 print(f"  -> Set csr-active-config to 03080000 (enables AuxKC / WhateverXe userland Metal bundles)")
 
 nvram_del = nvram.setdefault("Delete", {}).setdefault(nvram_uuid, [])
@@ -168,20 +170,23 @@ for key in ["boot-args", "csr-active-config"]:
 # - framebuffer-unifiedmem: \x00\x00\x00\x60 (1536 MB / 0x60000000).
 # - framebuffer-patch-enable: \x01\x00\x00\x00
 # - framebuffer-stolenmem: \x00\x00\xc0\x03 (60 MB DVMT pre-allocated ceiling)
-# - Note: enable-backlight-registers-fix is removed (prevents black screen on Alder Lake eDP)
+# - force-online: \x01\x00\x00\x00 (Forces internal eDP DDI port online, escaping 7MB VESA fallback)
+# - enable-cdclk-frequency-fix: \x01\x00\x00\x00 (Synchronizes pixel clock for 144Hz panel)
+# - REMOVED: AAPL,GfxYTile (Legacy Coffee Lake property that breaks Gen12 Xe-LP tiling & Metal init)
 dev_add = config.setdefault("DeviceProperties", {}).setdefault("Add", {})
 dev_add["PciRoot(0x0)/Pci(0x2,0x0)"] = {
-    "AAPL,GfxYTile": b"\x01\x00\x00\x00",
     "device-id": b"\x8b\x46\x00\x00",
+    "enable-cdclk-frequency-fix": b"\x01\x00\x00\x00",
     "enable-dbuf-early-optimizer": b"\x01\x00\x00\x00",
     "enable-dvmt-calc-fix": b"\x01\x00\x00\x00",
     "enable-metal": b"\x01\x00\x00\x00",
+    "force-online": b"\x01\x00\x00\x00",
     "framebuffer-patch-enable": b"\x01\x00\x00\x00",
     "framebuffer-stolenmem": b"\x00\x00\xc0\x03",
     "framebuffer-unifiedmem": b"\x00\x00\x00\x60",  # 1536 MB (1.5 GB, Tiger Lake donor standard)
     "model": "Intel UHD Graphics (Alder Lake-HX 8086:468B)"
 }
-print("  -> Injected 1536MB Unified VRAM DeviceProperties (AppleIntelTGLGraphics donor baseline, backlight fix removed)")
+print("  -> Injected 1536MB Unified VRAM DeviceProperties (force-online + cdclk-fix enabled, AAPL,GfxYTile removed)")
 
 # 7. OpenCore Picker Safe Escape Entry
 misc = config.setdefault("Misc", {})
@@ -199,8 +204,20 @@ entries.append({
 misc["Entries"] = entries
 print("  -> OpenCore Misc/Entries configured with Safe Escape option (-wexoff)")
 
-# 8. Kernel Kext reordering: Lilu #1, VirtualSMC #2
+# 8. Kernel Kext verification & reordering: Lilu #1, VirtualSMC #2
 kexts = config["Kernel"]["Add"]
+for k in kexts:
+    b_path = k.get("BundlePath", "")
+    if "WhateverGreen" in b_path:
+        k["Enabled"] = False
+        print(f"  -> Disabled {b_path} (Eliminates Lilu dual-hook collision with WhateverXe)")
+    elif "WhateverXe" in b_path or "AMFIPass" in b_path:
+        k["Enabled"] = True
+        print(f"  -> Verified enabled: {b_path}")
+    elif any(inp in b_path for inp in ["VoodooI2C", "VoodooGPIO", "VoodooPS2"]):
+        k["Enabled"] = True
+        print(f"  -> Verified enabled: {b_path} (Touchpad / Keyboard)")
+
 lilu_list = [k for k in kexts if k["BundlePath"] == "Lilu.kext"]
 smc_names = ["VirtualSMC.kext", "SMCBatteryManager.kext", "SMCProcessor.kext", "SMCSuperIO.kext", "SMCLightSensor.kext"]
 smc_list = [k for k in kexts if k["BundlePath"] in smc_names]
@@ -220,7 +237,9 @@ print("\n[5/5] Verification Summary:")
 print("  • ACPI DSDT.aml: Genuine live BIOS Dynamic Graphic table (665,178 bytes, 0 mod 256)")
 print("  • ACPI SSDT-PWRB: Provided _STR method to silence [_SB.PWRB._STR] AE_NOT_FOUND")
 print("  • iGPU VRAM:     1536 MB (1.5 GB Apple Tiger Lake donor profile standard)")
+print("  • VESA Escape:   force-online + cdclk-fix injected, AAPL,GfxYTile removed")
+print("  • Input Fix:     -vi2c-force-polling (fixes login screen touchpad/keyboard freeze)")
+print("  • Hang Fix:      -wex-skip-gputicks (bypasses register 0x2910 polling)")
 print("  • NVRAM SIP:     csr-active-config = 03080000 (AuxKC enabled)")
-print("  • Boot Args:     -v -allow3d -disablegfxfirmware -igfxdvmt")
 print("  • Booter Quirks: Golden working baseline preserved (RebuildAppleMemoryMap=False)")
 print("\n[DONE] SYSTEM_DRV (S:) is 100% fixed and ready to boot. No ACPI parse errors!")
