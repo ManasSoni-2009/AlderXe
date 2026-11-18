@@ -26,13 +26,15 @@ echo =====================================================================
 if %PY_EXIT% equ 0 (
     echo  [SUCCESS] Configuration successfully updated!
     echo  All fixes applied:
-    echo    - Login Freeze Fix (Eliminated amfi=0x80 to unblock authd/securityd keychain unlock)
-    echo    - Metal Freeze Fix (Removed -wex-skip-gputicks and force-online phantom displays)
-    echo    - Audio Deadlock Fix (Disabled SimpleHDA to unblock coreaudiod login hook)
+    echo    - 50%% Apple Logo Freeze Fix (Restored -wex-skip-gputicks register 0x2910 polling bypass)
+    echo    - Tahoe AuxKC Kext Fix (Restored cs_enforcement_disable=1 and amfi=0x80)
+    echo    - Display & Panel Fix (Restored device-id 8086:468B, force-online eDP unblank, cdclk-fix)
+    echo    - Post-Password Login Freeze Fix (-wex-noaccel Framebuffer Mode + purged conflicting NVIDIA flags)
+    echo    - Audio Baseline Preserved (SimpleHDA + AppleALC)
     echo    - VoodooInput Deduplication (Fixes vm_map_delete kernel panic)
     echo    - PS2 Trackpad/Mouse Conflict Eliminated
     echo    - Input Freeze Fix (-vi2c-force-polling)
-    echo    - Safe Picker Entries Added (-wex-noaccel Framebuffer & -wexoff Safe Mode)
+    echo    - Safe Picker Entries Added (-allow3d Metal 3D, -wex-noaccel Framebuffer, -wexoff Safe Mode)
 ) else (
     echo  [ERROR] Script exited with code %PY_EXIT%.
     echo  Check fix_system_drv.log for details.
