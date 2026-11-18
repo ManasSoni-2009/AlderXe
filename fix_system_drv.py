@@ -157,27 +157,12 @@ kernel_quirks = config.setdefault("Kernel", {}).setdefault("Quirks", {})
 kernel_quirks["DisableIoMapper"] = True
 print("  -> Set Kernel Quirk: DisableIoMapper=True")
 
-# 3b. Kernel Block: Exclude com.apple.driver.IOVersatile (eliminates 0xdc00800e dependency error)
+# 3b. Kernel Block: Remove any IOVersatile block (Prevents vm_map_delete 0xdc00800e kernel panic)
 kernel_block = config.setdefault("Kernel", {}).setdefault("Block", [])
-found_iov = False
-for entry in kernel_block:
-    if isinstance(entry, dict) and "IOVersatile" in entry.get("Identifier", ""):
-        entry["Enabled"] = True
-        entry["Strategy"] = "Exclude"
-        found_iov = True
-        print("  -> Updated Kernel -> Block for com.apple.driver.IOVersatile (Strategy=Exclude)")
-
-if not found_iov:
-    kernel_block.append({
-        "Arch": "Any",
-        "Comment": "Exclude broken IOVersatile kext in macOS Tahoe (0xdc00800e)",
-        "Enabled": True,
-        "Identifier": "com.apple.driver.IOVersatile",
-        "MaxKernel": "",
-        "MinKernel": "",
-        "Strategy": "Exclude"
-    })
-    print("  -> Injected Kernel -> Block: com.apple.driver.IOVersatile (Strategy=Exclude)")
+config["Kernel"]["Block"] = [
+    b for b in kernel_block if not (isinstance(b, dict) and "IOVersatile" in b.get("Identifier", ""))
+]
+print("  -> Cleaned Kernel -> Block (Removed IOVersatile exclusion to prevent vm_map_delete panic)")
 
 # 4. UEFI Quirks & APFS
 config.setdefault("UEFI", {}).setdefault("APFS", {})["HideVerbose"] = False
@@ -291,7 +276,7 @@ print("  • iGPU VRAM:     1536 MB (1.5 GB Apple Tiger Lake donor profile stand
 print("  • VESA Escape:   force-online + cdclk-fix injected, AAPL,GfxYTile removed")
 print("  • Input Fix:     -vi2c-force-polling (fixes login screen touchpad/keyboard freeze)")
 print("  • Hang Fix:      -wex-skip-gputicks (bypasses register 0x2910 polling)")
-print("  • IOVersatile:   Excluded com.apple.driver.IOVersatile in Kernel -> Block (0xdc00800e fixed)")
+print("  • Kernel Block:  Cleaned (Prevents vm_map_delete panic in addKextsFromKextCollection)")
 print("  • NVRAM SIP:     csr-active-config = 03080000 (AuxKC enabled)")
 print("  • Booter Quirks: Golden working baseline preserved (RebuildAppleMemoryMap=False)")
 print("\n[DONE] SYSTEM_DRV (S:) is 100% fixed and ready to boot. No ACPI parse errors!")
