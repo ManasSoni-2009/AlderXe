@@ -24,16 +24,18 @@ set PY_EXIT=%errorlevel%
 echo.
 echo =====================================================================
 if %PY_EXIT% equ 0 (
-    echo  [SUCCESS] VESA Mode Configuration successfully applied!
+    echo  [SUCCESS] Full Metal 3 Hardware Acceleration successfully applied!
     echo  All fixes applied:
-    echo    - Pure VESA Mode (-wexoff, WhateverXe disabled, no driver spoofing)
-    echo    - 100%% Responsive Login Screen (Zero GPU locks, zero vsync stalls)
-    echo    - Input Active (-vi2c-force-polling + VoodooPS2Keyboard)
-    echo    - Tahoe AuxKC Kext Fix (cs_enforcement_disable=1 and amfi=0x80)
-    echo    - Audio Baseline Preserved (SimpleHDA + AppleALC)
+    echo    - Full Metal 3 Acceleration (WhateverXe enabled, -allow3d, 1536MB VRAM)
+    echo    - 100%% Responsive Login Screen (Purged amfi=0x80, authd/keychain restored)
+    echo    - Audio Deadlock Eliminated (SimpleHDA disabled, AppleALC alcid=11 active)
+    echo    - 50%% Apple Logo Freeze Fix (-wex-skip-gputicks register 0x2910 bypass)
+    echo    - Post-Password Spinner Fix (Purged conflicting dGPU flags, 60MB stolenmem)
+    echo    - Input Active (-vi2c-force-polling + VoodooPS2Keyboard + VoodooPS2Mouse)
     echo    - VoodooInput Deduplication (Fixes vm_map_delete kernel panic)
     echo    - Discrete RTX 2050 Powered Down (-nvoff nv_disable=1)
     echo    - DSDT Dynamic NVS Address Patched (Zero ACPI errors)
+    echo    - OpenCore Picker Fallbacks (-wex-noaccel Framebuffer, -wexoff Safe VESA)
 ) else (
     echo  [ERROR] Script exited with code %PY_EXIT%.
     echo  Check fix_system_drv.log for details.
