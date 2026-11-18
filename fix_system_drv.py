@@ -148,12 +148,13 @@ clean_args = " ".join(clean_args.split())
 if not clean_args.startswith("-v"):
     clean_args = "-v " + clean_args
 
-for arg in ["-allow3d", "-disablegfxfirmware", "-igfxdvmt"]:
+for arg in ["-allow3d", "-disablegfxfirmware", "-igfxdvmt", "-nvoff", "nv_disable=1"]:
     if arg not in clean_args:
         clean_args += f" {arg}"
 
 nvram_add["boot-args"] = clean_args
 print(f"  -> Injected boot-args: {clean_args}")
+print("     (-nvoff nv_disable=1 disables NullMoth from claiming IOVersatile and causing 0xdc00800e crash)")
 print(f"  -> Set csr-active-config to 03080000 (enables AuxKC / WhateverXe userland Metal bundles)")
 
 nvram_del = nvram.setdefault("Delete", {}).setdefault(nvram_uuid, [])

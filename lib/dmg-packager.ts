@@ -390,15 +390,15 @@ if 'csr-active-config' not in nv_del:
 tokens = [t for t in nv_add.get('boot-args', '').split() if not t.startswith('npci=') and t != 'ipc_control_port_options=0']
 
 if mode_act in ('patch_hybrid', 'patch_stage2'):
-    tokens = [t for t in tokens if t not in ('-wexoff', '-wex-noaccel', 'nv_disable=1')]
-    for req in ['-v', '-allow3d', '-disablegfxfirmware', '-igfxdvmt']:
+    tokens = [t for t in tokens if t not in ('-wexoff', '-wex-noaccel')]
+    for req in ['-v', '-allow3d', '-disablegfxfirmware', '-igfxdvmt', '-nvoff', 'nv_disable=1']:
         if req not in tokens: tokens.append(req)
 elif mode_act == 'patch_eco':
     tokens = [t for t in tokens if t not in ('-wexoff', '-wex-noaccel')]
-    for req in ['-v', '-allow3d', '-disablegfxfirmware', '-igfxdvmt', 'nv_disable=1']:
+    for req in ['-v', '-allow3d', '-disablegfxfirmware', '-igfxdvmt', '-nvoff', 'nv_disable=1']:
         if req not in tokens: tokens.append(req)
 elif mode_act == 'patch_discrete':
-    tokens = [t for t in tokens if t not in ('-allow3d', '-wex-noaccel', '-igfxdvmt', 'nv_disable=1')]
+    tokens = [t for t in tokens if t not in ('-allow3d', '-wex-noaccel', '-igfxdvmt', 'nv_disable=1', '-nvoff')]
     if '-wexoff' not in tokens: tokens.append('-wexoff')
     if '-v' not in tokens: tokens.append('-v')
 elif mode_act == 'patch_stage1':
