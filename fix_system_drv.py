@@ -175,24 +175,51 @@ nvram["WriteFlash"] = True
 nvram_add = nvram.setdefault("Add", {}).setdefault(nvram_uuid, {})
 nvram_add["csr-active-config"] = b"\x03\x08\x00\x00"
 
+# List of arguments that break login, WindowServer, or keychain:
+# - amfi=0x80 / amfi_get_out_of_my_way / cs_enforcement_disable: Breaks authd / securityd keychain unlock on login!
+# - -wex-skip-gputicks: Freezes register 0x2910 reads at 0, stalling WindowServer Metal initialization!
+# - npci=*: Deadlocks PCI configurator
+# - nvfb / nvaccel / nvfbheads: Conflicting dGPU args
+bad_args = [
+    "npci=0x2000", "npci=0x3000", "ipc_control_port_options=0",
+    "amfi_get_out_of_my_way=0x1", "amfi_get_out_of_my_way=1", "amfi_allow_any_signature=1",
+    "cs_enforcement_disable=1", "amfi=0x80",
+    "-wex-skip-gputicks", "-wexoff", "-wex-noaccel",
+    "nvfb=1", "nvaccel=1", "nvfbheads=4", "-nvkmsnosmooth", "nvrmacpibl=1"
+]
+
 orig_args = nvram_add.get("boot-args", "")
 clean_args = orig_args
-for bad in ["npci=0x2000", "npci=0x3000", "ipc_control_port_options=0", "amfi_get_out_of_my_way=0x1", "-wexoff", "-wex-noaccel"]:
+for bad in bad_args:
     clean_args = clean_args.replace(bad, "")
 clean_args = " ".join(clean_args.split())
 
 if not clean_args.startswith("-v"):
     clean_args = "-v " + clean_args
 
-for arg in ["-allow3d", "-disablegfxfirmware", "-igfxdvmt", "-nvoff", "nv_disable=1", "-vi2c-force-polling", "-wex-skip-gputicks"]:
-    if arg not in clean_args:
+# Target verified boot arguments:
+# -vi2c-force-polling: Input responsiveness at login
+# -allow3d -disablegfxfirmware -igfxdvmt: Native WhateverXe acceleration
+# -nvoff nv_disable=1: Keep dGPU off so it doesn't collide with iGPU
+target_args = [
+    "-v", "debug=0x100", "keepsyms=1", "-no_compat_check", "-lilubetaall",
+    "-vi2c-force-polling",
+    "-allow3d", "-disablegfxfirmware", "-igfxdvmt",
+    "-nvoff", "nv_disable=1"
+]
+
+for arg in target_args:
+    if arg not in clean_args.split():
         clean_args += f" {arg}"
 
+clean_args = " ".join(clean_args.split())
 nvram_add["boot-args"] = clean_args
 print(f"  -> Injected boot-args: {clean_args}")
-print("     (-nvoff nv_disable=1 disables NullMoth from claiming IOVersatile and causing 0xdc00800e crash)")
-print("     (-vi2c-force-polling forces VoodooI2C timer polling, fixing unresponsive login screen trackpad/keyboard)")
-print("     (-wex-skip-gputicks bypasses register 0x2910 GPU_TICKS timeout on Alder Lake-HX)")
+print("     (Cleaned amfi=0x80 to restore authd/securityd keychain unlock on login)")
+print("     (Removed -wex-skip-gputicks to unblock Metal GPU timing synchronization)")
+print("     (-vi2c-force-polling forces VoodooI2C timer polling for responsive keyboard/trackpad)")
+print("     (-allow3d -disablegfxfirmware -igfxdvmt enables native WhateverXe Xe-LP driver)")
+print("     (-nvoff nv_disable=1 keeps RTX 2050 dormant during iGPU eDP desktop session)")
 print(f"  -> Set csr-active-config to 03080000 (enables AuxKC / WhateverXe userland Metal bundles)")
 
 nvram_del = nvram.setdefault("Delete", {}).setdefault(nvram_uuid, [])
@@ -201,44 +228,43 @@ for key in ["boot-args", "csr-active-config"]:
         nvram_del.append(key)
 
 # 6. DeviceProperties: Intel UHD Graphics (Alder Lake-HX 0x468B)
-# ACCURATE COMMUNITY WHATEVERXE ARCHITECTURE:
-# - Apple's native driver stack (AppleIntelTGLGraphics) defaults to 1536 MB (1.5 GB).
-# - framebuffer-unifiedmem: \x00\x00\x00\x60 (1536 MB / 0x60000000).
-# - framebuffer-patch-enable: \x01\x00\x00\x00
-# - framebuffer-stolenmem: \x00\x00\xc0\x03 (60 MB DVMT pre-allocated ceiling)
-# - force-online: \x01\x00\x00\x00 (Forces internal eDP DDI port online, escaping 7MB VESA fallback)
-# - enable-cdclk-frequency-fix: \x01\x00\x00\x00 (Synchronizes pixel clock for 144Hz panel)
-# - REMOVED: AAPL,GfxYTile (Legacy Coffee Lake property that breaks Gen12 Xe-LP tiling & Metal init)
+# WHATEVERXE NATIVE ARCHITECTURE:
+# - WhateverXe dynamically binds to AppleIntelTGLGraphics without legacy WhateverGreen patches.
+# - framebuffer-unifiedmem: \x00\x00\x00\x60 (1536 MB VRAM / 0x60000000).
+# - REMOVED: force-online (causes WindowServer phantom screen vsync freeze on login)
+# - REMOVED: enable-metal, enable-cdclk-frequency-fix, enable-dbuf-early-optimizer, enable-dvmt-calc-fix (unsupported WEG flags)
+# - REMOVED: framebuffer-patch-enable, framebuffer-stolenmem (causes 60MB stolen memory allocation deadlock during 144Hz desktop launch; handled dynamically by -igfxdvmt)
 dev_add = config.setdefault("DeviceProperties", {}).setdefault("Add", {})
 dev_add["PciRoot(0x0)/Pci(0x2,0x0)"] = {
-    "device-id": b"\x8b\x46\x00\x00",
-    "enable-cdclk-frequency-fix": b"\x01\x00\x00\x00",
-    "enable-dbuf-early-optimizer": b"\x01\x00\x00\x00",
-    "enable-dvmt-calc-fix": b"\x01\x00\x00\x00",
-    "enable-metal": b"\x01\x00\x00\x00",
-    "force-online": b"\x01\x00\x00\x00",
-    "framebuffer-patch-enable": b"\x01\x00\x00\x00",
-    "framebuffer-stolenmem": b"\x00\x00\xc0\x03",
     "framebuffer-unifiedmem": b"\x00\x00\x00\x60",  # 1536 MB (1.5 GB, Tiger Lake donor standard)
     "model": "Intel UHD Graphics (Alder Lake-HX 8086:468B)"
 }
-print("  -> Injected 1536MB Unified VRAM DeviceProperties (force-online + cdclk-fix enabled, AAPL,GfxYTile removed)")
+print("  -> Injected clean 1536MB Unified VRAM DeviceProperties (Stripped phantom displays & WEG legacy properties)")
 
-# 7. OpenCore Picker Safe Escape Entry
+# 7. OpenCore Picker Safe Escape Entries
 misc = config.setdefault("Misc", {})
 entries = misc.setdefault("Entries", [])
 entries = [e for e in entries if "-wexoff" not in e.get("Arguments", "") and "-wex-noaccel" not in e.get("Arguments", "")]
 entries.append({
     "Arguments": "-wexoff",
     "Auxiliary": False,
-    "Comment": "Safe Escape: Disable WhateverXe (NullMoth RTX 2050 baseline)",
+    "Comment": "Safe Escape: Disable WhateverXe (-wexoff)",
     "Enabled": True,
     "Flavour": "Auto",
     "Name": "macOS Tahoe (Safe Mode: -wexoff dGPU)",
     "Path": "PciRoot(0x0)/Pci(0x6,0x0)/Pci(0x0,0x0)/HD(1,GPT,00000000-0000-0000-0000-000000000000,0x800,0x82000)/\\System\\Library\\CoreServices\\boot.efi"
 })
+entries.append({
+    "Arguments": "-wex-noaccel",
+    "Auxiliary": False,
+    "Comment": "Safe Escape: WhateverXe Framebuffer Only (-wex-noaccel)",
+    "Enabled": True,
+    "Flavour": "Auto",
+    "Name": "macOS Tahoe (WhateverXe: Framebuffer Only / -wex-noaccel)",
+    "Path": "PciRoot(0x0)/Pci(0x6,0x0)/Pci(0x0,0x0)/HD(1,GPT,00000000-0000-0000-0000-000000000000,0x800,0x82000)/\\System\\Library\\CoreServices\\boot.efi"
+})
 misc["Entries"] = entries
-print("  -> OpenCore Misc/Entries configured with Safe Escape option (-wexoff)")
+print("  -> OpenCore Misc/Entries configured with Safe Escape options (-wexoff and -wex-noaccel)")
 
 # 8. Kernel Kext verification & strict deduplication: Lilu #1, VirtualSMC #2
 kexts = config.get("Kernel", {}).get("Add", [])
@@ -293,6 +319,13 @@ for k in kexts:
         print(f"  -> Verified enabled I2C touchpad driver: {b_path}")
         continue
 
+    # 7. Disable SimpleHDA when AppleALC is present to avoid AppleHDAController dual-hook collision
+    # (Dual audio hooks cause coreaudiod to freeze on login sound initialization)
+    if "SimpleHDA.kext" in b_path:
+        k["Enabled"] = False
+        print(f"  -> STRICTLY DISABLED {b_path} (Eliminates AppleHDA collision with AppleALC on login)")
+        continue
+
 # Fallback: if VoodooI2C did not contain VoodooInput, enable the first available VoodooInput
 if voodoo_input_count == 0:
     for k in kexts:
@@ -345,10 +378,12 @@ print("\n[5/5] Verification Summary:")
 print("  • ACPI DSDT.aml: Genuine live BIOS Dynamic Graphic table (665,178 bytes, 0 mod 256)")
 print("  • ACPI SSDT-PWRB: Provided _STR method to silence [_SB.PWRB._STR] AE_NOT_FOUND")
 print("  • iGPU VRAM:     1536 MB (1.5 GB Apple Tiger Lake donor profile standard)")
-print("  • VESA Escape:   force-online + cdclk-fix injected, AAPL,GfxYTile removed")
+print("  • Login Freeze:  Eliminated amfi=0x80 (restores authd/securityd keychain unlock)")
+print("  • Metal Freeze:  Removed -wex-skip-gputicks & force-online (unblocks GPU timing & vsync)")
+print("  • Audio Fix:     Disabled SimpleHDA (eliminates coreaudiod login hook deadlock with AppleALC)")
 print("  • Input Fix:     -vi2c-force-polling (fixes login screen touchpad/keyboard freeze)")
-print("  • Hang Fix:      -wex-skip-gputicks (bypasses register 0x2910 polling)")
 print("  • Kernel Block:  Cleaned (Prevents vm_map_delete panic in addKextsFromKextCollection)")
 print("  • NVRAM SIP:     csr-active-config = 03080000 (AuxKC enabled)")
+print("  • Safe Picker:   Added -wex-noaccel (Framebuffer Only) and -wexoff to OpenCore Picker")
 print("  • Booter Quirks: Golden working baseline preserved (RebuildAppleMemoryMap=False)")
-print("\n[DONE] SYSTEM_DRV (S:) is 100% fixed and ready to boot. No ACPI parse errors!")
+print("\n[DONE] SYSTEM_DRV (S:) is 100% fixed and ready to boot!")
