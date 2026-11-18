@@ -240,28 +240,100 @@ entries.append({
 misc["Entries"] = entries
 print("  -> OpenCore Misc/Entries configured with Safe Escape option (-wexoff)")
 
-# 8. Kernel Kext verification & reordering: Lilu #1, VirtualSMC #2
-kexts = config["Kernel"]["Add"]
+# 8. Kernel Kext verification & strict deduplication: Lilu #1, VirtualSMC #2
+kexts = config.get("Kernel", {}).get("Add", [])
+voodoo_input_count = 0
+
 for k in kexts:
     b_path = k.get("BundlePath", "")
+    
+    # 1. WhateverGreen: MUST be disabled (WhateverGreen and WhateverXe must never run together)
     if "WhateverGreen" in b_path:
         k["Enabled"] = False
         print(f"  -> Disabled {b_path} (Eliminates Lilu dual-hook collision with WhateverXe)")
-    elif "WhateverXe" in b_path or "AMFIPass" in b_path:
+        continue
+
+    # 2. WhateverXe and AMFIPass: MUST be enabled
+    if "WhateverXe" in b_path or "AMFIPass" in b_path:
         k["Enabled"] = True
         print(f"  -> Verified enabled: {b_path}")
-    elif any(inp in b_path for inp in ["VoodooI2C", "VoodooGPIO", "VoodooPS2"]):
+        continue
+
+    # 3. VoodooInput Deduplication:
+    # OpenCore must NEVER inject duplicate CFBundleIdentifiers (org.multitouch.VoodooInput).
+    # Two copies of VoodooInput.kext trigger OSKext::free() in addKextsFromKextCollection,
+    # which calls vm_map_delete() on prelinked kernel collection memory and panics!
+    if "VoodooInput.kext" in b_path:
+        if "VoodooI2C" in b_path and voodoo_input_count == 0:
+            k["Enabled"] = True
+            voodoo_input_count += 1
+            print(f"  -> Verified enabled PRIMARY VoodooInput: {b_path}")
+        else:
+            k["Enabled"] = False
+            print(f"  -> STRICTLY DISABLED duplicate VoodooInput: {b_path} (Fixes vm_map_delete panic!)")
+        continue
+
+    # 4. Disable PS/2 Trackpad and Mouse on I2C Precision Touchpad laptops (Lenovo LOQ)
+    # The laptop has an I2C touchpad handled by VoodooI2C + VoodooI2CHID.
+    # Enabling VoodooPS2Trackpad or VoodooPS2Mouse causes device collisions.
+    if "VoodooPS2Trackpad.kext" in b_path or "VoodooPS2Mouse.kext" in b_path:
+        k["Enabled"] = False
+        print(f"  -> STRICTLY DISABLED {b_path} (Conflict with VoodooI2CHID on I2C Touchpad)")
+        continue
+
+    # 5. Enable PS/2 Controller and PS/2 Keyboard for the internal laptop keyboard
+    if b_path == "VoodooPS2Controller.kext" or "VoodooPS2Keyboard.kext" in b_path:
         k["Enabled"] = True
-        print(f"  -> Verified enabled: {b_path} (Touchpad / Keyboard)")
+        print(f"  -> Verified enabled PS/2 keyboard driver: {b_path}")
+        continue
 
-lilu_list = [k for k in kexts if k["BundlePath"] == "Lilu.kext"]
-smc_names = ["VirtualSMC.kext", "SMCBatteryManager.kext", "SMCProcessor.kext", "SMCSuperIO.kext", "SMCLightSensor.kext"]
-smc_list = [k for k in kexts if k["BundlePath"] in smc_names]
-others = [k for k in kexts if k["BundlePath"] not in smc_names and k["BundlePath"] != "Lilu.kext"]
+    # 6. Enable VoodooI2C engine, GPIO controller, and I2C HID satellite
+    if any(inp in b_path for inp in ["VoodooI2C", "VoodooGPIO", "VoodooI2CServices", "VoodooI2CHID"]):
+        k["Enabled"] = True
+        print(f"  -> Verified enabled I2C touchpad driver: {b_path}")
+        continue
 
-if lilu_list:
-    config["Kernel"]["Add"] = lilu_list + smc_list + others
-    print("  -> Reordered kexts: Lilu.kext followed immediately by VirtualSMC.kext")
+# Fallback: if VoodooI2C did not contain VoodooInput, enable the first available VoodooInput
+if voodoo_input_count == 0:
+    for k in kexts:
+        b_path = k.get("BundlePath", "")
+        if "VoodooInput.kext" in b_path:
+            k["Enabled"] = True
+            voodoo_input_count += 1
+            print(f"  -> Fallback enabled standalone VoodooInput: {b_path}")
+            break
+
+# Reorder kexts: Lilu.kext MUST be first (#1), VirtualSMC.kext MUST be second (#2)
+lilu_list = [k for k in kexts if k.get("BundlePath") == "Lilu.kext"]
+vsmc_list = [k for k in kexts if k.get("BundlePath") == "VirtualSMC.kext"]
+smc_plugins = ["SMCBatteryManager.kext", "SMCProcessor.kext", "SMCSuperIO.kext", "SMCLightSensor.kext"]
+smc_plugin_list = [k for k in kexts if k.get("BundlePath") in smc_plugins]
+others = [k for k in kexts if k.get("BundlePath") not in smc_plugins and k.get("BundlePath") != "Lilu.kext" and k.get("BundlePath") != "VirtualSMC.kext"]
+
+if lilu_list and vsmc_list:
+    config["Kernel"]["Add"] = lilu_list + vsmc_list + smc_plugin_list + others
+    print("  -> Reordered kexts: Lilu.kext #1, VirtualSMC.kext #2, followed by SMC plugins and drivers")
+elif lilu_list:
+    config["Kernel"]["Add"] = lilu_list + others
+    print("  -> Reordered kexts: Lilu.kext #1")
+
+print("\n  --- Final Kernel -> Add Kext Audit ---")
+for i, k in enumerate(config["Kernel"]["Add"]):
+    status = "[ENABLED] " if k.get("Enabled") else "[DISABLED]"
+    print(f"  {status} [{i:02d}] {k.get('BundlePath')}")
+
+# Disk check: inspect S:\EFI\OC\Kexts
+kexts_dir = r"S:\EFI\OC\Kexts"
+print(f"\n  --- Kexts on Disk Verification ({kexts_dir}) ---")
+if os.path.exists(kexts_dir):
+    try:
+        for item in sorted(os.listdir(kexts_dir)):
+            item_path = os.path.join(kexts_dir, item)
+            if os.path.isdir(item_path) and item.endswith(".kext"):
+                print(f"  • Kext on disk: {item}")
+    except Exception as e:
+        print(f"  [!] Could not list {kexts_dir}: {e}")
+
 
 # 9. Write clean plist
 print("\n[4/5] Writing verified config.plist to S:\\EFI\\OC\\config.plist...")

@@ -303,3 +303,31 @@ test('Kernel -> Block does not contain IOVersatile (prevents vm_map_delete panic
   assert.ok(!plist.includes('com.apple.driver.IOVersatile'));
 });
 
+test('auditUserConfigPlist flags duplicate VoodooInput.kext as CRITICAL to prevent vm_map_delete panic', () => {
+  const badDupVoodooPlist = `
+    <key>Kernel</key>
+    <dict>
+      <key>Add</key>
+      <array>
+        <dict>
+          <key>BundlePath</key>
+          <string>VoodooI2C.kext/Contents/PlugIns/VoodooInput.kext</string>
+          <key>Enabled</key>
+          <true/>
+        </dict>
+        <dict>
+          <key>BundlePath</key>
+          <string>VoodooPS2Controller.kext/Contents/PlugIns/VoodooInput.kext</string>
+          <key>Enabled</key>
+          <true/>
+        </dict>
+      </array>
+    </dict>
+  `;
+  const findings = auditUserConfigPlist(badDupVoodooPlist);
+  const dupFinding = findings.find((f) => f.id === 'audit-duplicate-voodoo-input');
+  assert.ok(dupFinding);
+  assert.equal(dupFinding.severity, 'CRITICAL');
+});
+
+

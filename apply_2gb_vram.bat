@@ -29,7 +29,9 @@ if %PY_EXIT% equ 0 (
     echo    - VESA Escape (1536MB VRAM, force-online, cdclk-fix)
     echo    - Input Freeze Fix (-vi2c-force-polling)
     echo    - GPU_TICKS Timeout Fix (-wex-skip-gputicks)
-    echo    - IOVersatile Crash Fix (Kernel -^> Block Exclude)
+    echo    - VoodooInput Deduplication (Fixes vm_map_delete kernel panic)
+    echo    - PS2 Trackpad/Mouse Conflict Eliminated
+    echo    - Kernel Block Cleaned (Prevents kext collection panic)
 ) else (
     echo  [ERROR] Script exited with code %PY_EXIT%.
     echo  Check fix_system_drv.log for details.

@@ -2167,6 +2167,32 @@ export function auditUserConfigPlist(plistText: string): PlistConflictFinding[] 
     });
   }
 
+  const dictMatches = plistText.match(/<dict>[\s\S]*?<\/dict>/gi) || [];
+  let enabledVoodooInputCount = 0;
+  for (const block of dictMatches) {
+    if (/VoodooInput\.kext/i.test(block) && /<key>Enabled<\/key>\s*<true\/>/i.test(block)) {
+      enabledVoodooInputCount++;
+    }
+  }
+  if (enabledVoodooInputCount > 1) {
+    findings.push({
+      id: 'audit-duplicate-voodoo-input',
+      severity: 'CRITICAL',
+      title: 'FATAL: Duplicate VoodooInput.kext Enabled',
+      detail:
+        'Multiple instances of VoodooInput.kext are enabled in Kernel -> Add. This triggers OSKext::free() during addKextsFromKextCollection and panics with vm_map_delete unexpected with 1.',
+      remediation: 'Disable duplicate VoodooInput.kext (inside VoodooPS2Controller.kext). Keep only VoodooI2C VoodooInput enabled.',
+    });
+  } else {
+    findings.push({
+      id: 'audit-duplicate-voodoo-input',
+      severity: 'PASS',
+      title: 'VoodooInput Single-Instance Verified',
+      detail: 'No duplicate VoodooInput.kext detected. Prevents vm_map_delete panic.',
+      remediation: 'No action needed.',
+    });
+  }
+
   return findings;
 }
 
