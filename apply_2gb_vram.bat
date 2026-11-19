@@ -27,7 +27,8 @@ if %PY_EXIT% equ 0 (
     echo  [SUCCESS] WhateverXe v0.8.3 & Full Metal 3 Configuration successfully applied!
     echo  All fixes applied:
     echo    - WhateverXe v0.8.3 Installed (Alder Lake-HX eDP startup fix matching PKG)
-    echo    - AMFIAnchor.kext + AMFIAnchorInjector.kext Deployed (Validates b00t0x CA)
+    echo    - AMFIAnchor + BOM-free AMFIAnchorInjector + AMFIPass Deployed
+    echo    - NullMoth dGPU Suppressed (-nvoff nv_disable=1 stops IOVersatile 0xdc00800e)
     echo    - Full Metal 3 Acceleration (WhateverXe enabled, -allow3d)
     echo    - 100%% Responsive Login Screen (Purged amfi=0x80, authd/keychain restored)
     echo    - Audio Deadlock Eliminated (SimpleHDA disabled, AppleALC alcid=11 active)

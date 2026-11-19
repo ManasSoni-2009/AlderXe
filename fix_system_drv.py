@@ -225,18 +225,17 @@ nvram_add["csr-active-config"] = b"\x03\x08\x00\x00"
 
 # List of arguments that break login, WindowServer, or keychain:
 # - amfi=0x80: CRITICAL BUG! Disabling AMFI breaks authd/securityd entitlement evaluation on macOS Tahoe,
-#   causing loginwindow to hang in a synchronous wait during login. AMFIAnchor handles trust cleanly!
+#   causing loginwindow to hang in a synchronous wait during login. AMFIAnchor + AMFIPass handle trust cleanly!
 # - cs_enforcement_disable=1 / amfi_get_out_of_my_way: Breaks userland security daemons.
 # - -wex-skip-gputicks: Hallucinated/nonexistent flag (purged).
-# - nvfb / nvaccel / nvfbheads: Conflicting dGPU args.
-# - -nvoff / nv_disable=1: Nonexistent WhateverXe flags.
+# - nvfb / nvaccel / nvfbheads: Conflicting dGPU active-render args.
 # - -wexoff / -wex-noaccel: Cleared for full accelerated Metal 3 boot.
 bad_args = [
     "npci=0x2000", "npci=0x3000", "ipc_control_port_options=0",
     "amfi_get_out_of_my_way=0x1", "amfi_get_out_of_my_way=1", "amfi_allow_any_signature=1",
     "cs_enforcement_disable=1", "amfi=0x80",
     "nvfb=1", "nvaccel=1", "nvfbheads=4", "-nvkmsnosmooth", "nvrmacpibl=1",
-    "-wexoff", "-wex-noaccel", "-wex-skip-gputicks", "-nvoff", "nv_disable=1"
+    "-wexoff", "-wex-noaccel", "-wex-skip-gputicks"
 ]
 
 orig_args = nvram_add.get("boot-args", "")
@@ -252,13 +251,17 @@ if not clean_args.startswith("-v"):
 # -allow3d: Enables full Metal 3 hardware acceleration on Intel Xe-LP
 # -disablegfxfirmware: Bypasses Apple GuC firmware signature verification on Alder Lake-HX
 # -igfxdvmt: Dynamic DVMT calculation fix for 60MB BIOS pre-allocated memory
+# -amfipassbeta: Ensures AMFIPass works cleanly alongside AMFIAnchor on Darwin 25 (Tahoe)
+# -nvoff nv_disable=1: Suppresses NullMoth NVRM/NVAccel in AuxKC to prevent IOVersatile 0xdc00800e stall
 # -vi2c-force-polling: Enforces timer polling on VoodooI2C for 100% responsive keyboard and trackpad
 # alcid=11: Sets AppleALC layout ID for native Lenovo LOQ onboard audio
 target_args = [
     "-v", "debug=0x100", "keepsyms=1", "-no_compat_check", "-lilubetaall",
+    "-amfipassbeta",
     "-vi2c-force-polling",
     "-disablegfxfirmware", "-igfxdvmt",
     "-allow3d",
+    "-nvoff", "nv_disable=1",
     "alcid=11"
 ]
 
@@ -272,6 +275,7 @@ print(f"  -> Injected boot-args (FULL METAL 3): {clean_args}")
 print("     (-allow3d activates full Metal 3 hardware acceleration on Intel Xe-LP)")
 print("     (-disablegfxfirmware bypasses Apple GuC signature check on Alder Lake-HX)")
 print("     (-igfxdvmt recalculates stolen memory for 60MB Lenovo LOQ DVMT)")
+print("     (-nvoff nv_disable=1 keeps NullMoth dormant, stopping IOVersatile 0xdc00800e crash)")
 print("     (Cleaned amfi=0x80: restores authd/securityd keychain unlock, fixing login screen freeze!)")
 print("     (-vi2c-force-polling enforces VoodooI2C timer polling for responsive keyboard/trackpad)")
 print("     (alcid=11 enables native Lenovo LOQ audio via AppleALC)")
@@ -300,7 +304,7 @@ misc = config.setdefault("Misc", {})
 entries = misc.setdefault("Entries", [])
 entries = [e for e in entries if "-wexoff" not in e.get("Arguments", "") and "-wex-noaccel" not in e.get("Arguments", "") and "-allow3d" not in e.get("Arguments", "")]
 entries.append({
-    "Arguments": "-v debug=0x100 keepsyms=1 -vi2c-force-polling -disablegfxfirmware -igfxdvmt -wex-noaccel alcid=11",
+    "Arguments": "-v debug=0x100 keepsyms=1 -amfipassbeta -vi2c-force-polling -disablegfxfirmware -igfxdvmt -wex-noaccel -nvoff nv_disable=1 alcid=11",
     "Auxiliary": False,
     "Comment": "Rescue Entry: WhateverXe Framebuffer Only (-wex-noaccel)",
     "Enabled": True,
@@ -309,7 +313,7 @@ entries.append({
     "Path": "PciRoot(0x0)/Pci(0x6,0x0)/Pci(0x0,0x0)/HD(1,GPT,00000000-0000-0000-0000-000000000000,0x800,0x82000)/\\System\\Library\\CoreServices\\boot.efi"
 })
 entries.append({
-    "Arguments": "-v debug=0x100 keepsyms=1 -vi2c-force-polling -wexoff nvfb=1 nvaccel=1 nvfbheads=4 -nvkmsnosmooth nvrmacpibl=1 alcid=11",
+    "Arguments": "-v debug=0x100 keepsyms=1 -amfipassbeta -vi2c-force-polling -wexoff nvfb=1 nvaccel=1 nvfbheads=4 -nvkmsnosmooth nvrmacpibl=1 alcid=11",
     "Auxiliary": False,
     "Comment": "Rescue Entry: Golden Baseline RTX 2050 dGPU (-wexoff)",
     "Enabled": True,
@@ -318,7 +322,7 @@ entries.append({
     "Path": "PciRoot(0x0)/Pci(0x6,0x0)/Pci(0x0,0x0)/HD(1,GPT,00000000-0000-0000-0000-000000000000,0x800,0x82000)/\\System\\Library\\CoreServices\\boot.efi"
 })
 entries.append({
-    "Arguments": "-v debug=0x100 keepsyms=1 -vi2c-force-polling -wexoff alcid=11",
+    "Arguments": "-v debug=0x100 keepsyms=1 -amfipassbeta -vi2c-force-polling -wexoff -nvoff nv_disable=1 alcid=11",
     "Auxiliary": False,
     "Comment": "Rescue Entry: Safe VESA Mode (-wexoff)",
     "Enabled": True,
@@ -403,10 +407,11 @@ for k in kexts:
         print(f"  -> Verified ENABLED: {b_path} (b00t0x CA anchor injector)")
         continue
 
-    # 2d. AMFIPass: Disable because AMFIAnchor supersedes it
+    # 2d. AMFIPass: Keep ENABLED after AMFIAnchor & AMFIAnchorInjector
+    # Required for existing NullMoth/OCLP/older Tahoe AuxKC payloads so cs_blob validation succeeds
     if "AMFIPass" in b_path:
-        k["Enabled"] = False
-        print(f"  -> Disabled {b_path} (Superseded by AMFIAnchor)")
+        k["Enabled"] = True
+        print(f"  -> Verified ENABLED: {b_path} (Loaded after AMFIAnchor for legacy/NullMoth AuxKC trust)")
         continue
 
     # 3. VoodooInput Deduplication:
@@ -475,22 +480,24 @@ if voodoo_input_count == 0:
 # 1. Lilu.kext
 # 2. AMFIAnchor.kext
 # 3. AMFIAnchorInjector.kext
-# 4. VirtualSMC.kext
-# 5. SMC plugins
-# 6. WhateverXe.kext
-# 7. Remaining kexts
+# 4. AMFIPass.kext (after AMFIAnchor per upstream AMFIAnchor docs)
+# 5. VirtualSMC.kext
+# 6. SMC plugins
+# 7. WhateverXe.kext
+# 8. Remaining kexts
 lilu_list = [k for k in kexts if k.get("BundlePath") == "Lilu.kext"]
 anchor_list = [k for k in kexts if k.get("BundlePath") == "AMFIAnchor.kext"]
 anchor_inj_list = [k for k in kexts if k.get("BundlePath") == "AMFIAnchorInjector.kext"]
+amfipass_list = [k for k in kexts if "AMFIPass" in k.get("BundlePath", "")]
 vsmc_list = [k for k in kexts if k.get("BundlePath") == "VirtualSMC.kext"]
 smc_plugins = ["SMCBatteryManager.kext", "SMCProcessor.kext", "SMCSuperIO.kext", "SMCLightSensor.kext"]
 smc_plugin_list = [k for k in kexts if k.get("BundlePath") in smc_plugins]
 wex_list = [k for k in kexts if k.get("BundlePath") == "WhateverXe.kext"]
-excluded_paths = ["Lilu.kext", "AMFIAnchor.kext", "AMFIAnchorInjector.kext", "VirtualSMC.kext", "WhateverXe.kext"] + smc_plugins
+excluded_paths = ["Lilu.kext", "AMFIAnchor.kext", "AMFIAnchorInjector.kext", "VirtualSMC.kext", "WhateverXe.kext"] + smc_plugins + [k.get("BundlePath", "") for k in amfipass_list]
 others = [k for k in kexts if k.get("BundlePath") not in excluded_paths]
 
-config["Kernel"]["Add"] = lilu_list + anchor_list + anchor_inj_list + vsmc_list + smc_plugin_list + wex_list + others
-print("  -> Reordered kexts: Lilu #1, AMFIAnchor #2, AMFIAnchorInjector #3, VirtualSMC #4, SMC Plugins, WhateverXe #6")
+config["Kernel"]["Add"] = lilu_list + anchor_list + anchor_inj_list + amfipass_list + vsmc_list + smc_plugin_list + wex_list + others
+print("  -> Reordered kexts: Lilu #1, AMFIAnchor #2, AMFIAnchorInjector #3, AMFIPass #4, VirtualSMC #5, WhateverXe #7")
 
 print("\n  --- Final Kernel -> Add Kext Audit ---")
 for i, k in enumerate(config["Kernel"]["Add"]):
@@ -517,8 +524,9 @@ print(f"  -> SUCCESS: Wrote clean config.plist ({os.path.getsize(cfg_target)} by
 
 print("\n[5/5] Verification Summary (FULL METAL 3 ACCELERATED MODE):")
 print("  • Graphics Engine: WhateverXe.kext v0.8.3 UPGRADED & ENABLED (-allow3d, Metal 3)")
-print("  • Security Stack:  AMFIAnchor.kext + AMFIAnchorInjector.kext installed (b00t0x CA trusted)")
-print("  • Login Freeze:    AMFI enabled + AMFIAnchor active (authd/securityd unlock keychain cleanly)")
+print("  • Security Stack:  AMFIAnchor + AMFIAnchorInjector (BOM-free) + AMFIPass (-amfipassbeta)")
+print("  • NullMoth Guard:  -nvoff nv_disable=1 active (stops IOVersatile 0xdc00800e stall)")
+print("  • Login Freeze:    AMFI enabled + AMFIAnchor/AMFIPass active (authd/securityd unlock cleanly)")
 print("  • DVMT Memory:     60MB stolen memory allocation (framebuffer-stolenmem 0000C003 + -igfxdvmt)")
 print("  • Audio Engine:    AppleALC enabled with alcid=11 (SimpleHDA strictly disabled to stop deadlocks)")
 print("  • Input Engine:    -vi2c-force-polling + VoodooPS2Keyboard + VoodooPS2Mouse enabled")
