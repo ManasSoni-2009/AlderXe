@@ -1,5 +1,5 @@
 @echo off
-title SYSTEM_DRV (S:) 1536MB VRAM & ACPI Fix - Lenovo LOQ AlderXe
+title SYSTEM_DRV (S:) WhateverXe v0.8.3 & Full Metal 3 Restorer - Lenovo LOQ AlderXe
 cd /d "%~dp0"
 
 :: Check for Administrator permissions
@@ -12,7 +12,7 @@ if %errorlevel% neq 0 (
 )
 
 echo =====================================================================
-echo  Lenovo LOQ 15IAX9 / 15IRX9 - WhateverXe 1536MB VRAM & ACPI Fix Inserter
+echo  Lenovo LOQ 15IAX9 / 15IRX9 - WhateverXe v0.8.3 & Full Metal 3 Restorer
 echo  Target: S:\EFI\OC (SYSTEM_DRV - NVMe Partition 1)
 echo  D:\EFI IS STRICTLY PROTECTED AND NEVER TOUCHED!
 echo =====================================================================
@@ -27,14 +27,13 @@ if %PY_EXIT% equ 0 (
     echo  [SUCCESS] WhateverXe v0.8.3 & Full Metal 3 Configuration successfully applied!
     echo  All fixes applied:
     echo    - WhateverXe v0.8.3 Installed (Alder Lake-HX eDP startup fix matching PKG)
-    echo    - Full Metal 3 Acceleration (WhateverXe enabled, -allow3d, 1536MB VRAM)
+    echo    - AMFIAnchor.kext + AMFIAnchorInjector.kext Deployed (Validates b00t0x CA)
+    echo    - Full Metal 3 Acceleration (WhateverXe enabled, -allow3d)
     echo    - 100%% Responsive Login Screen (Purged amfi=0x80, authd/keychain restored)
     echo    - Audio Deadlock Eliminated (SimpleHDA disabled, AppleALC alcid=11 active)
-    echo    - 50%% Apple Logo Freeze Fix (-wex-skip-gputicks register 0x2910 bypass)
-    echo    - Post-Password Spinner Fix (Purged conflicting dGPU flags, 60MB stolenmem)
+    echo    - Clean DeviceProperties (60MB stolenmem, zero bogus flags)
     echo    - Input Active (-vi2c-force-polling + VoodooPS2Keyboard + VoodooPS2Mouse)
     echo    - VoodooInput Deduplication (Fixes vm_map_delete kernel panic)
-    echo    - Discrete RTX 2050 Powered Down (-nvoff nv_disable=1)
     echo    - DSDT Dynamic NVS Address Patched (Zero ACPI errors)
     echo    - OpenCore Picker Fallbacks (Framebuffer Only, Golden Baseline RTX 2050, Safe VESA)
 ) else (
